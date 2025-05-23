@@ -20,6 +20,7 @@
 #include <stdbool.h>
 
 #include "command.h"
+#include "window.h"
 
 typedef enum {
   EditorState_Running,
@@ -31,8 +32,11 @@ typedef enum {
 typedef struct {
   EditorState state;
   Command command;
+  Window window;
+  char* error_message;
 } Editor;
 
-void editor_process_key(Editor *editor, int key);
+void editor_process_key(Editor* editor, int key);
 
-bool editor_should_exit(const Editor *editor);
+bool editor_should_exit(const Editor* editor);
+void editor_redraw_screen(const Editor* editor);

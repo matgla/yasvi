@@ -23,57 +23,121 @@
 
 #include "command.h"
 
-#define SHOULD_EXIT 2
+typedef enum {
+  CommandResult_Success = 0,
+  CommandResult_CommandNotFound = 1,
+  CommandResult_ShouldExit = 2,
+} CommandResult;
 
-static void editor_collect_command(Editor *editor, int key) {
+// true if editor loop should continue
+static bool editor_collect_command(Editor* editor, int key) {
   if (key == '\n') {
     editor->state = EditorState_ProcessingCommand;
-    return;
-  }
-  if (key == 27) {
+    return true;
+  } else if (key == 27) {
     // cancel command
     command_deinit(&editor->command);
     editor->state = EditorState_Running;
+    return true;
+  } else if (key == KEY_BACKSPACE || key == 127) {
+    editor->command.cursor_position--;
+    editor->command.buffer[editor->command.cursor_position] = '\0';
+    return false;
+  }
+  command_append(&editor->command, (char)key);
+  return false;
+}
+
+static CommandResult editor_process_command(const Command* command) {
+  if (strcmp(command->buffer, "q") == 0) {
+    return CommandResult_ShouldExit;
+  }
+
+  return CommandResult_CommandNotFound;
+}
+
+static void editor_set_error_message(Editor* editor, const char* message) {
+  int error_length = strlen(message);
+  int message_offset = 0;
+  if (editor->error_message) {
+    free(editor->error_message);
+  }
+  editor->error_message =
+    (char*)malloc(editor->command.cursor_position + error_length + 4);
+  if (editor->error_message) {
+    memcpy(editor->error_message, message, error_length);
+    message_offset += error_length;
+    memcpy(editor->error_message + message_offset, ": '", 3);
+    message_offset += 3;
+    memcpy(editor->error_message + message_offset, editor->command.buffer,
+           editor->command.cursor_position);
+    message_offset += editor->command.cursor_position;
+    editor->error_message[message_offset] = '\'';
+    ++message_offset;
+    editor->error_message[message_offset] = '\0';
+  }
+}
+
+void editor_process_key(Editor* editor, int key) {
+  bool done = false;
+  mvaddch(editor->window.height - 1, editor->window.width - 2, (char)key);
+  while (!done) {
+    switch (editor->state) {
+      case EditorState_CollectingCommand: {
+        if (!editor_collect_command(editor, key)) {
+          return;
+        }
+      } break;
+      case EditorState_ProcessingCommand: {
+        int command_result = editor_process_command(&editor->command);
+        switch (command_result) {
+          case CommandResult_ShouldExit: {
+            editor->state = EditorState_Exiting;
+          } break;
+          case CommandResult_CommandNotFound: {
+            editor_set_error_message(editor, "Command not found");
+            editor->state = EditorState_Running;
+          } break;
+          default: {
+          }
+        }
+        command_deinit(&editor->command);
+        return;
+      } break;
+      case EditorState_Running:
+        switch (key) {
+          case ':': {
+            command_init(&editor->command);
+            editor->state = EditorState_CollectingCommand;
+            return;
+          } break;
+          default:
+            return;
+        }
+        break;
+      case EditorState_Exiting:
+        return;
+    };
+  }
+}
+
+bool editor_should_exit(const Editor* editor) {
+  return editor->state == EditorState_Exiting;
+}
+
+void editor_draw_status_bar(const Editor* editor) {
+  if (editor->state == EditorState_CollectingCommand) {
+    mvaddch(editor->window.height - 1, 0, ':');
+    mvaddstr(editor->window.height - 1, 1, editor->command.buffer);
+    return;
+  }
+  if (editor->error_message) {
+    mvaddstr(editor->window.height - 1, 0, editor->error_message);
     return;
   }
 }
 
-int editor_process_command(const Command *command) {
-  printf("Processing command: '%s'\n", command->buffer);
-  if (strcmp(command->buffer, "q") == 0) {
-    return SHOULD_EXIT;
-  }
-  return 0;
-}
-
-void editor_process_key(Editor *editor, int key) {
-  mvaddch(40, 70, (char)key);
-  switch (editor->state) {
-  case EditorState_CollectingCommand: {
-    return editor_collect_command(editor, key);
-  } break;
-  case EditorState_ProcessingCommand: {
-    if (editor_process_command(&editor->command) == SHOULD_EXIT) {
-      editor->state = EditorState_Exiting;
-      command_deinit(&editor->command);
-      return;
-    }
-  } break;
-  case EditorState_Running:
-    switch (key) {
-    case ':': {
-      command_init(&editor->command);
-      editor->state = EditorState_CollectingCommand;
-    } break;
-    default:
-      break;
-    }
-    break;
-  case EditorState_Exiting:
-    break;
-  };
-}
-
-bool editor_should_exit(const Editor *editor) {
-  return editor->state == EditorState_Exiting;
+void editor_redraw_screen(const Editor* editor) {
+  editor_draw_status_bar(editor);
+  window_redraw_screen(&editor->window);
 }

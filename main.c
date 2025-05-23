@@ -24,9 +24,12 @@
 int main() {
   int key = 0;
   Editor editor = {
-      .state = EditorState_Running,
+    .state = EditorState_Running,
+    .window = {0, 0},
+    .command = {NULL, 0, 0},
+    .error_message = NULL,
   };
-  window_init();
+  window_init(&editor.window);
   while (true) {
     if ((key = getch()) != ERR) {
       editor_process_key(&editor, key);
@@ -35,8 +38,8 @@ int main() {
     if (editor_should_exit(&editor)) {
       break;
     }
-    window_redraw_screen();
+    editor_redraw_screen(&editor);
   }
-  window_deinit();
+  window_deinit(&editor.window);
   return 0;
 }

@@ -17,20 +17,22 @@
 
 #include <ncurses.h>
 
-void window_init() {
+#include "window.h"
+
+void window_init(Window *window) {
   initscr();
   cbreak();
-  nodelay(stdscr, TRUE);
   noecho();
   curs_set(0);
   clear();
   refresh();
+  getmaxyx(stdscr, window->height, window->width);
 }
 
-void window_deinit() {
+void window_deinit(Window *window) {
   endwin();
 }
 
-void window_redraw_screen() {
+void window_redraw_screen(const Window *window) {
   refresh();
 }

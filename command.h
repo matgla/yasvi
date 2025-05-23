@@ -20,11 +20,12 @@
 #include <stdlib.h>
 
 typedef struct {
-  char *buffer;
+  char* buffer;
   size_t buffer_size;
   size_t cursor_position;
 } Command;
 
-void command_init(Command *command);
-void command_append(Command *command, char ch);
-void command_deinit(Command *command);
+void command_init(Command* command);
+void command_append(Command* command, char ch);
+void command_deinit(Command* command);
+void command_error(Command* command, const char* message);

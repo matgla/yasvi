@@ -17,6 +17,11 @@
 
 #pragma once
 
-void window_init();
-void window_redraw_screen();
-void window_deinit();
+typedef struct {
+  int width;
+  int height;
+} Window;
+
+void window_init(Window *window);
+void window_redraw_screen(const Window *window);
+void window_deinit(Window *window);
