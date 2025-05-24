@@ -156,6 +156,7 @@ static void editor_move_cursor_x(Editor* editor, int x) {
   const int chars_till_window_end = editor->window.width - editor->cursor.x - 1;
   if (x > chars_till_end) {
     x = chars_till_end;
+    x -= buffer_row_has_whitespace_at_position(current_line, line_length);
   }
 
   if (x > chars_till_window_end) {
@@ -168,14 +169,6 @@ static void editor_move_cursor_x(Editor* editor, int x) {
 
   if (x > 0) {
     editor->current_buffer->start_column += x;
-  }
-
-  if (editor->cursor.x + editor->current_buffer->start_column -
-        editor->number_of_line_digits ==
-      buffer_row_get_length(current_line)) {
-    if (buffer_row_has_whitespace_at_position(current_line, line_length)) {
-      editor->cursor.x--;
-    }
   }
 }
 
