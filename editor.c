@@ -48,8 +48,7 @@ static bool editor_collect_command(Editor* editor, int key) {
   return false;
 }
 
-static void editor_clear_error_message(Editor *editor)
-{
+static void editor_clear_error_message(Editor* editor) {
   if (editor->error_message) {
     for (int i = 0; i < strlen(editor->error_message); ++i) {
       mvaddch(editor->window.height - 1, 1 + i, ' ');
@@ -58,7 +57,6 @@ static void editor_clear_error_message(Editor *editor)
     editor->error_message = NULL;
   }
 }
-
 
 static CommandResult editor_process_command(const Command* command) {
   if (strcmp(command->buffer, "q") == 0) {
@@ -71,10 +69,10 @@ static CommandResult editor_process_command(const Command* command) {
 static void editor_set_error_message(Editor* editor, const char* message) {
   int error_length = strlen(message);
   int message_offset = 0;
-  editor_clear_error_message(editor); 
+  editor_clear_error_message(editor);
   editor->error_message =
-    (char*)malloc(editor->command.cursor_position + error_length + 4);
-  if (editor->error_message) {
+    (char*)malloc(editor->command.cursor_position + error_length + 5);
+  if (editor->error_message && editor->command.buffer) {
     memcpy(editor->error_message, message, error_length);
     message_offset += error_length;
     memcpy(editor->error_message + message_offset, ": '", 3);
@@ -85,9 +83,182 @@ static void editor_set_error_message(Editor* editor, const char* message) {
     editor->error_message[message_offset] = '\'';
     ++message_offset;
     editor->error_message[message_offset] = '\0';
+  } else if (editor->error_message != NULL) {
+    memcpy(editor->error_message, message, error_length);
+    editor->error_message[error_length] = '\0';
+  }
+  editor_redraw_screen(editor);
+}
+
+static void editor_restore_cursor_position(const Editor* editor) {
+  move(editor->cursor.y, editor->cursor.x);
+}
+
+static void editor_move_cursor_to_end(Editor* editor) {
+  if (editor->current_buffer == NULL) {
+    return;
+  }
+  int line_length = buffer_get_line_length(
+    editor->current_buffer, editor->current_buffer->start_line + editor->cursor.y);
+
+  if (line_length < 0) {
+    editor->cursor.x = editor->number_of_line_digits;
+    editor->current_buffer->start_column = 0;
+    return;
+  }
+  if (line_length >= editor->window.width - 1) {
+    editor->current_buffer->start_column =
+      line_length - editor->window.width + editor->number_of_line_digits + 1;
+    editor->cursor.x = editor->window.width - 1;
+  } else {
+    editor->cursor.x = editor->number_of_line_digits + line_length;
+    editor->current_buffer->start_column = 0;
   }
 }
 
+static void editor_move_cursor_to_start(Editor* editor) {
+  if (editor->current_buffer == NULL) {
+    return;
+  }
+  editor->cursor.x = editor->number_of_line_digits;
+  editor->current_buffer->start_column = 0;
+}
+
+static void editor_fix_cursor_position_for_line(Editor* editor) {
+  if (editor->current_buffer == NULL) {
+    return;
+  }
+  int line_length = buffer_get_line_length(
+    editor->current_buffer, editor->cursor.y + editor->current_buffer->start_line);
+  if (line_length < 0) {
+    editor->cursor.x = editor->number_of_line_digits;
+    return;
+  }
+  if (editor->cursor.x + editor->current_buffer->start_column -
+        editor->number_of_line_digits >
+      line_length) {
+    // Ensure cursor does not go beyond the right edge
+    editor_move_cursor_to_end(editor);
+  }
+}
+
+static void editor_process_editor_key(Editor* editor, int key) {
+  // TODO: scroll buffers
+  Buffer* current_buffer = editor->current_buffer;
+  if (key == 'h') {
+    // Move cursor left
+    if (editor->cursor.x > editor->number_of_line_digits) {
+      editor->cursor.x--;
+    } else {
+      // scroll buffer to the right
+      if (current_buffer && current_buffer->start_column > 0) {
+        current_buffer->start_column--;
+      }
+    }
+  } else if (key == 'l') {
+    // Move cursor right
+    if (editor->cursor.x < editor->window.width - 1) {
+      if (current_buffer == NULL) {
+        return;
+      }
+      int line_length =
+        buffer_get_line_length(current_buffer,
+                               editor->cursor.y + current_buffer->start_line) -
+        editor->current_buffer->start_column;
+      if (editor->cursor.x < editor->number_of_line_digits + line_length) {
+        editor->cursor.x++;
+      }
+    } else {
+      // scroll buffer to the left
+      BufferRow* line = buffer_get_row(
+        current_buffer, editor->cursor.y + current_buffer->start_line);
+      if (current_buffer &&
+          current_buffer->start_column <
+            line->len - editor->window.width + editor->number_of_line_digits) {
+        current_buffer->start_column++;
+      }
+    }
+  } else if (key == 'j') {
+    // Move cursor down
+    if (editor->cursor.y < editor->window.height - 3) {
+      editor->cursor.y++;
+    } else {
+      // scroll buffer down
+      if (editor->current_buffer && editor->current_buffer->tail) {
+        if (editor->current_buffer->start_line <
+            editor->current_buffer->number_of_rows - editor->window.height + 2) {
+          editor->current_buffer->start_line++;
+        }
+      }
+    }
+    editor_fix_cursor_position_for_line(editor);
+  } else if (key == 'k') {
+    // Move cursor up
+    if (editor->cursor.y > 0) {
+      editor->cursor.y--;
+    } else {
+      if (editor->current_buffer && editor->current_buffer->start_line > 0) {
+        editor->current_buffer->start_line--;
+      }
+    }
+    editor_fix_cursor_position_for_line(editor);
+  } else if (key == '^') {
+    editor_move_cursor_to_start(editor);
+  } else if (key == '$') {
+    editor_move_cursor_to_end(editor);
+  }
+}
+
+static bool editor_append_buffer(Editor* editor, Buffer* buffer) {
+  editor->buffers = NULL;
+  editor->buffers = (Buffer**)realloc(
+    editor->buffers, sizeof(Buffer*) * (editor->number_of_buffers + 1));
+  if (editor->buffers == NULL) {
+    editor_set_error_message(editor, "Failed to allocate memory for buffers");
+    return false;
+  }
+
+  editor->buffers[editor->number_of_buffers] = buffer;
+  editor->number_of_buffers++;
+  return true;
+}
+
+static int count_digits(int number) {
+  int count = 0;
+  if (number == 0) {
+    return 1;
+  }
+  while (number > 0) {
+    number /= 10;
+    count++;
+  }
+  return count;
+}
+
+static void editor_draw_buffers(Editor* editor) {
+  int line_number = 0;
+  if (editor->current_buffer != NULL) {
+    // Draw current buffer
+    BufferRow* row =
+      buffer_get_row(editor->current_buffer, editor->current_buffer->start_line);
+    int max_digits =
+      count_digits(editor->current_buffer->start_line + editor->window.height - 2);
+    editor->number_of_line_digits = max_digits + 1;
+
+    while (row != NULL && line_number < editor->window.height - 2) {
+      int row_number = line_number + editor->current_buffer->start_line + 1;
+      mvprintw(line_number, 0, "%d ", row_number);
+
+      int max_line_length = editor->window.width - editor->number_of_line_digits;
+      if (editor->current_buffer->start_column < row->len) {
+        mvaddnstr(line_number, editor->number_of_line_digits,
+                  &row->data[editor->current_buffer->start_column], max_line_length);
+      }
+      line_number++;
+      row = row->next;
+    }
+  }
+}
 
 void editor_process_key(Editor* editor, int key) {
   bool done = false;
@@ -125,10 +296,17 @@ void editor_process_key(Editor* editor, int key) {
             editor->state = EditorState_CollectingCommand;
             return;
           } break;
-          default:
+          default: {
+            editor_restore_cursor_position(editor);
+            editor_process_editor_key(editor, key);
+            move(editor->cursor.y, editor->cursor.x);
             return;
+          }
         }
         break;
+      case EditorState_EditMode:
+        editor_restore_cursor_position(editor);
+        return;
       case EditorState_Exiting:
         return;
     };
@@ -141,29 +319,62 @@ bool editor_should_exit(const Editor* editor) {
 
 void editor_draw_status_bar(const Editor* editor) {
   if (editor->state == EditorState_CollectingCommand) {
-    mvaddch(editor->window.height - 1, 0, ':');
-    mvaddstr(editor->window.height - 1, 1, editor->command.buffer);
-    return;
+    if (editor->command.buffer != NULL) {
+      mvaddch(editor->window.height - 1, 0, ':');
+      mvaddstr(editor->window.height - 1, 1, editor->command.buffer);
+    }
   }
   if (editor->error_message) {
     mvaddstr(editor->window.height - 1, 1, editor->error_message);
-    return;
   }
 }
 
-void editor_redraw_screen(const Editor* editor) {
+void editor_redraw_screen(Editor* editor) {
+  clear();
+  editor_draw_buffers(editor);
   editor_draw_status_bar(editor);
+  switch (editor->state) {
+    case EditorState_Running:
+    case EditorState_EditMode:
+      editor_restore_cursor_position(editor);
+      break;
+    default:
+      break;
+  }
   window_redraw_screen(&editor->window);
 }
 
 void editor_init(Editor* editor) {
   window_init(&editor->window);
+  editor->cursor.x = editor->number_of_line_digits;
+  move(editor->cursor.y, editor->cursor.x);
 }
 
 void editor_deinit(Editor* editor) {
+  for (size_t i = 0; i < editor->number_of_buffers; ++i) {
+    buffer_free(editor->buffers[i]);
+  }
+  free(editor->buffers);
   if (editor->error_message) {
     free(editor->error_message);
     editor->error_message = NULL;
   }
   window_deinit(&editor->window);
+}
+
+void editor_load_file(Editor* editor, const char* filename) {
+  Buffer* buffer = buffer_alloc();
+  if (buffer == NULL) {
+    editor_set_error_message(editor, "Failed to allocate memory for buffer");
+    return;
+  }
+  buffer_load_from_file(buffer, filename);
+  if (!editor_append_buffer(editor, buffer)) {
+    editor_set_error_message(editor, "Failed to append buffer");
+    buffer_free(buffer);
+    return;
+  }
+  if (editor->current_buffer == NULL) {
+    editor->current_buffer = buffer;
+  }
 }

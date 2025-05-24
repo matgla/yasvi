@@ -1,6 +1,6 @@
 CC ?= armv8m-tcc
-CFLAGS = -Wall
-LDFLAGS = -lncurses
+CFLAGS = -Wall -g -fsanitize=address -fno-omit-frame-pointer 
+LDFLAGS = -lncurses -fsanitize=address
 SRCS = $(wildcard *.c)
 OBJS = $(patsubst %.c, build/%.o, $(SRCS))
 

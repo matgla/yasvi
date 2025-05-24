@@ -21,15 +21,25 @@
 #include "editor.h"
 #include "window.h"
 
-int main() {
+int main(int argc, char* argv[]) {
   int key = 0;
   Editor editor = {
     .state = EditorState_Running,
     .window = {0, 0},
     .command = {NULL, 0, 0},
     .error_message = NULL,
+    .cursor = {2, 0},
+    .number_of_line_digits = 3,
+    .current_buffer = NULL,
+    .buffers = NULL,
+    .number_of_buffers = 0,
   };
-  editor_init(&editor); 
+  editor_init(&editor);
+  if (argc > 1) {
+    editor_load_file(&editor, argv[1]);
+  }
+
+  editor_redraw_screen(&editor);
   while (true) {
     if ((key = getch()) != ERR) {
       editor_process_key(&editor, key);

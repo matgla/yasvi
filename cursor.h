@@ -15,23 +15,9 @@
  along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include <ncurses.h>
+#pragma once
 
-#include "window.h"
-
-void window_init(Window* window) {
-  initscr();
-  cbreak();
-  noecho();
-  clear();
-  refresh();
-  getmaxyx(stdscr, window->height, window->width);
-}
-
-void window_deinit(Window* window) {
-  endwin();
-}
-
-void window_redraw_screen(const Window* window) {
-  refresh();
-}
+typedef struct Cursor {
+  int x;
+  int y;
+} Cursor;
