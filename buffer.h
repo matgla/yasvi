@@ -30,6 +30,7 @@ typedef struct BufferRow {
 typedef struct Buffer {
   BufferRow* head;
   BufferRow* tail;
+  BufferRow* current_row;
   size_t number_of_rows;
   int start_line;
   int start_column;
@@ -43,3 +44,8 @@ BufferRow* buffer_get_first_row(const Buffer* buffer);
 BufferRow* buffer_get_row(const Buffer* buffer, int index);
 int buffer_get_line_length(const Buffer* buffer, int index);
 bool buffer_append_line(Buffer* buffer, const char* line);
+
+int buffer_row_get_offset_to_first_char(BufferRow* row, int start_index);
+bool buffer_row_has_whitespace_at_position(BufferRow* row, int position);
+int buffer_row_get_length(const BufferRow* row);
+int buffer_row_get_offset_to_next_word(const BufferRow* row, int start_index);

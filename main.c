@@ -33,6 +33,7 @@ int main(int argc, char* argv[]) {
     .current_buffer = NULL,
     .buffers = NULL,
     .number_of_buffers = 0,
+    .end_line_mode = false,
   };
   editor_init(&editor);
   if (argc > 1) {

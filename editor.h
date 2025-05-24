@@ -42,6 +42,7 @@ typedef struct {
   Buffer* current_buffer;
   Buffer** buffers;
   size_t number_of_buffers;
+  bool end_line_mode;
 } Editor;
 
 void editor_process_key(Editor* editor, int key);

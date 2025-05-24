@@ -30,6 +30,7 @@ static bool buffer_append_list_row(Buffer* buffer, BufferRow* new_row) {
   if (buffer->tail == NULL) {
     buffer->head = new_row;
     buffer->tail = new_row;
+    buffer->current_row = new_row;
     new_row->next = NULL;
     new_row->prev = NULL;
     buffer->number_of_rows = 1;
@@ -52,6 +53,7 @@ Buffer* buffer_alloc() {
   if (buffer) {
     buffer->head = NULL;
     buffer->tail = NULL;
+    buffer->current_row = NULL;
     buffer->number_of_rows = 0;
     buffer->start_line = 0;
     buffer->start_column = 0;
@@ -153,5 +155,43 @@ int buffer_get_line_length(const Buffer* buffer, int index) {
   if (row == NULL) {
     return -1;  // Row not found
   }
-  return row->len - 1;  // Exclude the newline character
+  return row->len;  // Exclude the newline character
+}
+
+const char whitespace[] = " \f\n\r\t\v";
+
+int buffer_row_get_offset_to_first_char(BufferRow* row, int start_index) {
+  if (row == NULL || start_index < 0 || start_index >= row->len) {
+    return 0;  // Invalid buffer or start index
+  }
+
+  return strspn(&row->data[start_index], whitespace);
+}
+
+bool buffer_row_has_whitespace_at_position(BufferRow* row, int position) {
+  if (row == NULL || position < 0 || position >= row->len) {
+    return false;  // Invalid row or position
+  }
+  return strchr(whitespace, row->data[position]) != NULL;
+}
+
+int buffer_row_get_length(const BufferRow* row) {
+  if (row == NULL) {
+    return 0;  // Invalid row
+  }
+  return row->len - 1;  // Return the length of the row
+}
+
+int buffer_row_get_offset_to_next_word(const BufferRow* row, int start_index) {
+  if (row == NULL || start_index < 0 || start_index >= row->len) {
+    return -1;  // Invalid row or start index
+  }
+
+  const char* data = &row->data[start_index];
+  const char* next_word = strpbrk(data, whitespace);
+  if (next_word == NULL) {
+    return -1;  // No more words found
+  }
+
+  return next_word - data;  // Return the offset to the next word
 }
