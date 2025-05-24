@@ -29,7 +29,7 @@ int main() {
     .command = {NULL, 0, 0},
     .error_message = NULL,
   };
-  window_init(&editor.window);
+  editor_init(&editor); 
   while (true) {
     if ((key = getch()) != ERR) {
       editor_process_key(&editor, key);
@@ -40,6 +40,6 @@ int main() {
     }
     editor_redraw_screen(&editor);
   }
-  window_deinit(&editor.window);
+  editor_deinit(&editor);
   return 0;
 }

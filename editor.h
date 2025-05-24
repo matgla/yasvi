@@ -37,6 +37,7 @@ typedef struct {
 } Editor;
 
 void editor_process_key(Editor* editor, int key);
-
 bool editor_should_exit(const Editor* editor);
 void editor_redraw_screen(const Editor* editor);
+void editor_init(Editor* editor);
+void editor_deinit(Editor* editor);

@@ -48,6 +48,18 @@ static bool editor_collect_command(Editor* editor, int key) {
   return false;
 }
 
+static void editor_clear_error_message(Editor *editor)
+{
+  if (editor->error_message) {
+    for (int i = 0; i < strlen(editor->error_message); ++i) {
+      mvaddch(editor->window.height - 1, 1 + i, ' ');
+    }
+    free(editor->error_message);
+    editor->error_message = NULL;
+  }
+}
+
+
 static CommandResult editor_process_command(const Command* command) {
   if (strcmp(command->buffer, "q") == 0) {
     return CommandResult_ShouldExit;
@@ -59,9 +71,7 @@ static CommandResult editor_process_command(const Command* command) {
 static void editor_set_error_message(Editor* editor, const char* message) {
   int error_length = strlen(message);
   int message_offset = 0;
-  if (editor->error_message) {
-    free(editor->error_message);
-  }
+  editor_clear_error_message(editor); 
   editor->error_message =
     (char*)malloc(editor->command.cursor_position + error_length + 4);
   if (editor->error_message) {
@@ -77,6 +87,7 @@ static void editor_set_error_message(Editor* editor, const char* message) {
     editor->error_message[message_offset] = '\0';
   }
 }
+
 
 void editor_process_key(Editor* editor, int key) {
   bool done = false;
@@ -107,6 +118,9 @@ void editor_process_key(Editor* editor, int key) {
       case EditorState_Running:
         switch (key) {
           case ':': {
+            if (editor->error_message) {
+              editor_clear_error_message(editor);
+            }
             command_init(&editor->command);
             editor->state = EditorState_CollectingCommand;
             return;
@@ -132,7 +146,7 @@ void editor_draw_status_bar(const Editor* editor) {
     return;
   }
   if (editor->error_message) {
-    mvaddstr(editor->window.height - 1, 0, editor->error_message);
+    mvaddstr(editor->window.height - 1, 1, editor->error_message);
     return;
   }
 }
@@ -140,4 +154,16 @@ void editor_draw_status_bar(const Editor* editor) {
 void editor_redraw_screen(const Editor* editor) {
   editor_draw_status_bar(editor);
   window_redraw_screen(&editor->window);
+}
+
+void editor_init(Editor* editor) {
+  window_init(&editor->window);
+}
+
+void editor_deinit(Editor* editor) {
+  if (editor->error_message) {
+    free(editor->error_message);
+    editor->error_message = NULL;
+  }
+  window_deinit(&editor->window);
 }
