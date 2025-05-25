@@ -73,6 +73,9 @@ static void editor_clear_error_message(Editor* editor) {
 
 static CommandResult editor_process_command(Editor* editor) {
   const Command* command = &editor->command;
+  if (command->buffer == NULL) {
+    return CommandResult_CommandNotFound;
+  }
   if (strcmp(command->buffer, "q") == 0) {
     return CommandResult_ShouldExit;
   }
@@ -92,8 +95,9 @@ static CommandResult editor_process_command(Editor* editor) {
 
     fclose(file);
     editor_set_error_message(editor, "File saved successfully");
+    command->buffer[0] = '\0';  // Clear command buffer
     return CommandResult_Success;
-   }
+  }
 
   return CommandResult_CommandNotFound;
 }
@@ -345,6 +349,25 @@ static void editor_process_editor_key(Editor* editor, int key) {
       editor->key_sequence[0] = 'g';
       return;
     }
+    case 'd': {
+      editor->key_sequence[0] = 'd';
+      return;
+    }
+    case 'x': {
+      if (editor->cursor.x + editor->current_buffer->start_column -
+            editor->number_of_line_digits <=
+          buffer_row_get_length(editor->current_buffer->current_row)) {
+        buffer_row_remove_char(editor->current_buffer->current_row,
+                               editor->cursor.x +
+                                 editor->current_buffer->start_column -
+                                 editor->number_of_line_digits);
+      } else {
+        buffer_row_remove_char(editor->current_buffer->current_row,
+                               editor->current_buffer->current_row->len - 1);
+        editor_move_cursor_x(editor, -1, false);
+      }
+      return;
+    }
     case 'i': {
       editor->end_line_mode = false;
       editor->state = EditorState_EditMode;
@@ -354,6 +377,10 @@ static void editor_process_editor_key(Editor* editor, int key) {
       editor->end_line_mode = false;
       editor->state = EditorState_EditMode;
       editor_move_cursor_x(editor, 1, true);
+      return;
+    }
+    case 27: {
+      editor_clear_error_message(editor);
       return;
     }
     default: {
@@ -433,6 +460,25 @@ static void editor_process_gkey_sequence(Editor* editor, int key) {
   }
 }
 
+static void editor_process_dkey_sequence(Editor* editor, int key) {
+  if (key == 'd') {
+    if (editor->current_buffer->number_of_rows <= 1) {
+      buffer_row_trim(editor->current_buffer->current_row, 0);
+    } else if (editor->current_buffer->current_row) {
+      BufferRow* next_row = editor->current_buffer->current_row->next;
+      if (next_row == NULL) {
+        next_row = editor->current_buffer->current_row->prev;
+        editor_move_cursor_y(editor, -1);
+      }
+      buffer_remove_row(editor->current_buffer, editor->current_buffer->current_row);
+      editor->current_buffer->current_row = next_row;
+      editor->cursor.x = 0;
+      editor->current_buffer->start_column = 0;
+    }
+  }
+  editor->key_sequence[0] = 0;
+}
+
 static bool editor_process_key_sequence(Editor* editor, int key) {
   const int current_length = strlen(editor->key_sequence);
   if (current_length >= sizeof(editor->key_sequence) - 1) {
@@ -460,6 +506,9 @@ static bool editor_process_key_sequence(Editor* editor, int key) {
     default: {
       if (editor->key_sequence[0] == 'g') {
         editor_process_gkey_sequence(editor, key);
+        return true;
+      } else if (editor->key_sequence[0] == 'd') {
+        editor_process_dkey_sequence(editor, key);
         return true;
       }
       editor->key_sequence[0] = 0;
@@ -547,6 +596,10 @@ void editor_process_key(Editor* editor, int key) {
           case CommandResult_CommandNotFound: {
             editor_set_error_message(editor, "Command not found");
             editor->state = EditorState_Running;
+          } break;
+          case CommandResult_Success: {
+            editor->state = EditorState_Running;
+            editor->command.buffer[0] = '\0';  // Clear command buffer
           } break;
           default: {
           }

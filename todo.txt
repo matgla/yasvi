@@ -1,0 +1,4 @@
+[] tab support (2-spaces, before configuration possible)
+[] tab counting, when { tab +2 , when } -2 
+[] basic coloring? 
+[] dw and dw keybinds

@@ -47,6 +47,7 @@ BufferRow* buffer_get_row(const Buffer* buffer, int index);
 int buffer_get_line_length(const Buffer* buffer, int index);
 bool buffer_append_line(Buffer* buffer, const char* line);
 void buffer_insert_row_at(Buffer* buffer, BufferRow* row);
+void buffer_remove_row(Buffer* buffer, BufferRow* row);
 
 int buffer_row_get_offset_to_first_char(BufferRow* row, int start_index);
 bool buffer_row_has_whitespace_at_position(const BufferRow* row, int position);

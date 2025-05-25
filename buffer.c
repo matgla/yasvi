@@ -138,8 +138,12 @@ void buffer_load_from_file(Buffer* buffer, const char* filename) {
   if (buffer == NULL || filename == NULL) {
     return;
   }
+
   FILE* file = fopen(filename, "r");
+
+  buffer->filename = strdup(filename);
   if (file == NULL) {
+    buffer_append_line(buffer, "\n");
     return;
   }
 
@@ -159,7 +163,6 @@ void buffer_load_from_file(Buffer* buffer, const char* filename) {
   }
 
   fclose(file);
-  buffer->filename = strdup(filename);
 }
 
 int buffer_get_line_length(const Buffer* buffer, int index) {
@@ -207,6 +210,28 @@ void buffer_insert_row_at(Buffer* buffer, BufferRow* row) {
   }
 
   buffer->number_of_rows++;
+}
+
+void buffer_remove_row(Buffer* buffer, BufferRow* row) {
+  if (buffer == NULL || row == NULL) {
+    return;  // Invalid buffer or row
+  }
+
+  if (row->prev != NULL) {
+    row->prev->next = row->next;
+  } else {
+    buffer->head = row->next;  // Remove head
+  }
+
+  if (row->next != NULL) {
+    row->next->prev = row->prev;
+  } else {
+    buffer->tail = row->prev;  // Remove tail
+  }
+
+  free(row->data);
+  free(row);
+  buffer->number_of_rows--;
 }
 
 int buffer_row_get_offset_to_first_char(BufferRow* row, int start_index) {
