@@ -46,6 +46,7 @@ int buffer_get_line_length(const Buffer* buffer, int index);
 bool buffer_append_line(Buffer* buffer, const char* line);
 
 int buffer_row_get_offset_to_first_char(BufferRow* row, int start_index);
-bool buffer_row_has_whitespace_at_position(BufferRow* row, int position);
+bool buffer_row_has_whitespace_at_position(const BufferRow* row, int position);
 int buffer_row_get_length(const BufferRow* row);
 int buffer_row_get_offset_to_next_word(const BufferRow* row, int start_index);
+int buffer_row_get_offset_to_prev_word(const BufferRow* row, int start_index);

@@ -34,6 +34,7 @@ int main(int argc, char* argv[]) {
     .buffers = NULL,
     .number_of_buffers = 0,
     .end_line_mode = false,
+    .status_bar = NULL,
   };
   editor_init(&editor);
   if (argc > 1) {

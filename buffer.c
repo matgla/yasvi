@@ -21,6 +21,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+const char whitespace[] = " \f\n\r\t\v";
+
 static bool buffer_append_list_row(Buffer* buffer, BufferRow* new_row) {
   if (buffer == NULL || new_row == NULL) {
     return false;
@@ -97,6 +99,13 @@ bool buffer_append_line(Buffer* buffer, const char* line) {
     free(new_row);
     return false;  // Failed to append row to buffer
   }
+
+  if (new_row->data[new_row->len - 1] == '\n' ||
+      new_row->data[new_row->len - 1] == '\r') {
+    new_row->data[new_row->len - 1] = '\0';
+    new_row->len--;
+  }
+
   return true;
 }
 
@@ -158,8 +167,6 @@ int buffer_get_line_length(const Buffer* buffer, int index) {
   return row->len;  // Exclude the newline character
 }
 
-const char whitespace[] = " \f\n\r\t\v";
-
 int buffer_row_get_offset_to_first_char(BufferRow* row, int start_index) {
   if (row == NULL || start_index < 0 || start_index >= row->len) {
     return 0;  // Invalid buffer or start index
@@ -168,7 +175,7 @@ int buffer_row_get_offset_to_first_char(BufferRow* row, int start_index) {
   return strspn(&row->data[start_index], whitespace);
 }
 
-bool buffer_row_has_whitespace_at_position(BufferRow* row, int position) {
+bool buffer_row_has_whitespace_at_position(const BufferRow* row, int position) {
   if (row == NULL || position < 0 || position >= row->len) {
     return false;  // Invalid row or position
   }
@@ -183,9 +190,54 @@ int buffer_row_get_length(const BufferRow* row) {
 }
 
 int buffer_row_get_offset_to_next_word(const BufferRow* row, int start_index) {
-  if (row == NULL || start_index < 0 || start_index >= row->len) {
-    return -1;  // Invalid row or start index
+  if (row == NULL || start_index < 0 || start_index > row->len) {
+    return 0;  // Invalid row or start index
+  }
+  int stripped = 0;
+  bool first_char = false;
+
+  for (int i = start_index; i < row->len; i++) {
+    if (!first_char) {
+      if (!buffer_row_has_whitespace_at_position(row, i)) {
+        first_char = true;  // Found the first non-whitespace character
+      } else {
+        ++stripped;
+        continue;
+      }
+    }
+    if (stripped > 0) {
+      return i - start_index;  // Return the offset to the next word
+    }
+    if (first_char && buffer_row_has_whitespace_at_position(row, i)) {
+      return i - start_index + 1;  // Return the offset to the next word
+    }
   }
 
-  return 10;
+  if (first_char) {
+    return row->len - start_index;  // Return the offset to the end of the line
+  }
+  return 0;
+}
+
+int buffer_row_get_offset_to_prev_word(const BufferRow* row, int start_index) {
+  if (row == NULL || start_index < 0 || start_index > row->len) {
+    return 0;  // Invalid row or start index
+  }
+  bool first_char = false;
+
+  for (int i = start_index - 1; i > 0; i--) {
+    if (!first_char) {
+      if (!buffer_row_has_whitespace_at_position(row, i)) {
+        first_char = true;  // Found the first non-whitespace character
+      } else {
+        continue;
+      }
+    }
+
+    if (first_char && buffer_row_has_whitespace_at_position(row, i)) {
+      return i - start_index + 1;  // Return the offset to the next word
+    }
+  }
+
+  return 0;
 }

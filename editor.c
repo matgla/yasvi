@@ -32,6 +32,13 @@ typedef enum {
 static void editor_move_cursor_to_end(Editor* editor);
 static void editor_move_cursor_x(Editor* editor, int x);
 
+static void editor_set_bar_message(Editor* editor, const char* message) {
+  if (editor->status_bar) {
+    free(editor->status_bar);
+  }
+  editor->status_bar = strdup(message);
+}
+
 // true if editor loop should continue
 static bool editor_collect_command(Editor* editor, int key) {
   if (key == '\n') {
@@ -129,7 +136,7 @@ static void editor_fix_cursor_position_for_line(Editor* editor) {
   }
   int line_length = buffer_row_get_length(editor->current_buffer->current_row);
 
-  if (line_length < editor->cursor.x) {
+  if (line_length + editor->number_of_line_digits < editor->cursor.x) {
     editor->cursor.x = editor->number_of_line_digits;
     editor->current_buffer->start_column = 0;
     editor_move_cursor_x(editor, line_length);
@@ -148,7 +155,7 @@ static void editor_move_to_previous_row(Editor* editor) {
   }
 }
 
-static void editor_move_cursor_x(Editor* editor, int x) {
+static void editor_move_cursor_x_to_right(Editor* editor, int x) {
   BufferRow* current_line = editor->current_buffer->current_row;
   const int line_length = buffer_row_get_length(current_line);
   const int chars_till_end = line_length - editor->current_buffer->start_column -
@@ -172,6 +179,32 @@ static void editor_move_cursor_x(Editor* editor, int x) {
   }
 }
 
+static void editor_move_cursor_x_to_left(Editor* editor, int x) {
+  const int chars_till_window = editor->cursor.x - editor->number_of_line_digits;
+
+  if (x > chars_till_window) {
+    x -= chars_till_window;
+    editor->cursor.x = editor->number_of_line_digits;
+  } else {
+    editor->cursor.x -= x;
+    x = 0;
+  }
+
+  if (x > editor->current_buffer->start_column) {
+    editor->current_buffer->start_column = 0;
+  } else {
+    editor->current_buffer->start_column -= x;
+  }
+}
+
+static void editor_move_cursor_x(Editor* editor, int x) {
+  if (x > 0) {
+    editor_move_cursor_x_to_right(editor, x);
+  } else {
+    editor_move_cursor_x_to_left(editor, -x);
+  }
+}
+
 static void editor_move_cursor_to_end(Editor* editor) {
   editor_move_cursor_x(editor,
                        buffer_row_get_length(editor->current_buffer->current_row));
@@ -184,14 +217,7 @@ static void editor_process_editor_key(Editor* editor, int key) {
     case 'h': {
       // Move cursor left
       editor->end_line_mode = false;
-      if (editor->cursor.x > editor->number_of_line_digits) {
-        editor->cursor.x--;
-      } else {
-        // scroll buffer to the right
-        if (current_buffer && current_buffer->start_column > 0) {
-          current_buffer->start_column--;
-        }
-      }
+      editor_move_cursor_x(editor, -1);
       return;
     }
     case 'l': {
@@ -251,13 +277,24 @@ static void editor_process_editor_key(Editor* editor, int key) {
       if (editor->cursor.x >= editor->current_buffer->current_row->len) {
         editor->cursor.x = editor->current_buffer->current_row->len;
       }
+      return;
     }
     case 'w': {
       int offset_to_word = buffer_row_get_offset_to_next_word(
-        editor->current_buffer->current_row,
-        editor->cursor.x + editor->current_buffer->start_column);
+        editor->current_buffer->current_row, editor->cursor.x +
+                                               editor->current_buffer->start_column -
+                                               editor->number_of_line_digits);
+      editor_move_cursor_x(editor, offset_to_word);
+      return;
+    }
+    case 'b': {
+      int offset_to_word = buffer_row_get_offset_to_prev_word(
+        editor->current_buffer->current_row, editor->cursor.x +
+                                               editor->current_buffer->start_column -
+                                               editor->number_of_line_digits);
       editor_move_cursor_x(editor, offset_to_word);
     }
+
     default: {
       return;
     }
@@ -388,6 +425,9 @@ void editor_draw_status_bar(const Editor* editor) {
   }
   if (editor->error_message) {
     mvaddstr(editor->window.height - 1, 1, editor->error_message);
+  }
+  if (editor->status_bar) {
+    mvaddstr(editor->window.height - 2, 0, editor->status_bar);
   }
 }
 
