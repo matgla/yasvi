@@ -35,6 +35,7 @@ typedef struct Buffer {
   int number_of_rows;
   int start_line;
   int start_column;
+  char* filename;
 } Buffer;
 
 Buffer* buffer_alloc();
@@ -55,4 +56,6 @@ int buffer_row_get_offset_to_prev_word(const BufferRow* row, int start_index);
 void buffer_row_replace_line(BufferRow* row, const char* new_line);
 void buffer_row_remove_char(BufferRow* row, int index);
 void buffer_row_insert_char(BufferRow* row, int index, char c);
+void buffer_row_insert_str(BufferRow* row, int index, const char* str);
+void buffer_row_trim(BufferRow* row, int start_index);
 void buffer_row_append_char(BufferRow* row, char c);

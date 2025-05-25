@@ -73,6 +73,10 @@ void buffer_free(Buffer* buffer) {
       free(current);
       current = next;
     }
+    if (buffer->filename) {
+      free(buffer->filename);
+      buffer->filename = NULL;
+    }
     free(buffer);
   }
 }
@@ -155,6 +159,7 @@ void buffer_load_from_file(Buffer* buffer, const char* filename) {
   }
 
   fclose(file);
+  buffer->filename = strdup(filename);
 }
 
 int buffer_get_line_length(const Buffer* buffer, int index) {
@@ -182,10 +187,25 @@ void buffer_insert_row_at(Buffer* buffer, BufferRow* row) {
   new_row->data[0] = '\0';  // Initialize with an empty string
   new_row->len = 0;
   new_row->allocated_size = 16;  // Initial size for the data buffer
-  new_row->next = row->next;
-  row->next->prev = new_row;
-  new_row->prev = row;
-  row->next = new_row;
+
+  if (row == NULL) {
+    // append to start
+    new_row->prev = NULL;
+    new_row->next = buffer->head;
+    buffer->head->prev = new_row;
+    buffer->head = new_row;
+  } else if (row->next == NULL) {
+    // append to end
+    row->next = new_row;
+    new_row->prev = row;
+    new_row->next = NULL;
+  } else {
+    new_row->next = row->next;
+    row->next->prev = new_row;
+    new_row->prev = row;
+    row->next = new_row;
+  }
+
   buffer->number_of_rows++;
 }
 
@@ -325,4 +345,39 @@ void buffer_row_append_char(BufferRow* row, char c) {
     return;  // Invalid row
   }
   buffer_row_insert_char(row, row->len, 0);
+}
+
+void buffer_row_insert_str(BufferRow* row, int index, const char* str) {
+  if (row == NULL || str == NULL || index < 0 || index > row->len) {
+    return;  // Invalid row, string, or index
+  }
+
+  int str_len = strlen(str);
+  if (str_len == 0) {
+    return;  // Nothing to insert
+  }
+
+  // reallocation is optimized to reduce realloc overhead
+  if (row->len + str_len >= row->allocated_size) {
+    // Reallocate memory if needed
+    row->allocated_size = row->len + str_len + 16;
+    row->data = realloc(row->data, row->allocated_size);
+  }
+
+  if (row->data == NULL) {
+    return;  // Memory allocation failed
+  }
+
+  memmove(&row->data[index + str_len], &row->data[index], row->len - index + 1);
+  memcpy(&row->data[index], str, str_len);
+  row->len += str_len;
+}
+
+void buffer_row_trim(BufferRow* row, int start_index) {
+  if (row == NULL || start_index < 0 || start_index >= row->len) {
+    return;  // Invalid row or start index
+  }
+
+  row->len = start_index;
+  row->data[row->len] = '\0';  // Null-terminate the string
 }

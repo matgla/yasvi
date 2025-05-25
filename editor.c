@@ -31,7 +31,9 @@ typedef enum {
 
 static void editor_move_cursor_to_end(Editor* editor);
 static void editor_move_cursor_x(Editor* editor, int x, bool insert_mode);
+static void editor_move_cursor_y(Editor* editor, int y);
 static bool editor_process_key_sequence(Editor* editor, int key);
+static void editor_set_error_message(Editor* editor, const char* message);
 
 static void editor_set_bar_message(Editor* editor, const char* message) {
   if (editor->status_bar) {
@@ -69,10 +71,29 @@ static void editor_clear_error_message(Editor* editor) {
   }
 }
 
-static CommandResult editor_process_command(const Command* command) {
+static CommandResult editor_process_command(Editor* editor) {
+  const Command* command = &editor->command;
   if (strcmp(command->buffer, "q") == 0) {
     return CommandResult_ShouldExit;
   }
+
+  if (strcmp(command->buffer, "w") == 0) {
+    FILE* file = fopen(editor->current_buffer->filename, "w");
+    if (file == NULL) {
+      editor_set_error_message(editor, "Failed to open file for writing");
+      return CommandResult_CommandNotFound;
+    }
+    for (BufferRow* row = editor->current_buffer->head; row != NULL;
+         row = row->next) {
+      if (row->data) {
+        fprintf(file, "%s\n", row->data);
+      }
+    }
+
+    fclose(file);
+    editor_set_error_message(editor, "File saved successfully");
+    return CommandResult_Success;
+   }
 
   return CommandResult_CommandNotFound;
 }
@@ -118,9 +139,9 @@ static void editor_move_cursor_to_start(Editor* editor) {
 }
 
 static void editor_move_to_top(Editor* editor) {
-  Buffer* buffer = editor->current_buffer;
   editor->current_buffer->current_row = editor->current_buffer->head;
   editor->cursor.y = 0;
+  editor->current_buffer->start_line = 0;
 }
 
 static void editor_move_to_bottom(Editor* editor) {
@@ -131,7 +152,7 @@ static void editor_move_to_bottom(Editor* editor) {
       start_line = buffer->number_of_rows - editor->window.height + 2;
       editor->cursor.y = editor->window.height - 3;
     } else {
-      editor->cursor.y = buffer->number_of_rows;
+      editor->cursor.y = buffer->number_of_rows - 1;
     }
     buffer->start_line = start_line;
   }
@@ -208,6 +229,25 @@ static void editor_move_cursor_x(Editor* editor, int x, bool insert_mode) {
     editor_move_cursor_x_to_right(editor, x, insert_mode);
   } else {
     editor_move_cursor_x_to_left(editor, -x);
+  }
+}
+
+static void editor_move_cursor_y(Editor* editor, int y) {
+  editor->cursor.y += y;
+  if (editor->cursor.y < 0) {
+    editor->current_buffer->start_line += editor->cursor.y;
+    if (editor->current_buffer->start_line < 0) {
+      editor->current_buffer->start_line = 0;
+    }
+    editor->cursor.y = 0;
+  } else if (editor->cursor.y >= editor->window.height - 2) {
+    editor->current_buffer->start_line +=
+      (editor->cursor.y - (editor->window.height + 3));
+    editor->cursor.y = editor->window.height - 3;
+    if (editor->current_buffer->start_line >
+        editor->current_buffer->number_of_rows) {
+      editor->current_buffer->start_line = editor->current_buffer->number_of_rows;
+    }
   }
 }
 
@@ -447,23 +487,39 @@ void editor_insert_char(Editor* editor, int key) {
     return;
   }
   if (key == '\n') {
-    if (editor->cursor.x - editor->number_of_line_digits >
+    if (editor->cursor.x - editor->number_of_line_digits >=
         editor->current_buffer->current_row->len) {
       buffer_insert_row_at(editor->current_buffer,
                            editor->current_buffer->current_row);
       editor->current_buffer->current_row =
         editor->current_buffer->current_row->next;
-      if (editor->cursor.y < editor->window.height - 3) {
-        editor->cursor.y++;
-      } else {
-        // scroll buffer down
-        editor->current_buffer->start_line++;
-      }
-      editor->cursor.x = editor->number_of_line_digits;
-    } else {
+      editor_move_cursor_y(editor, 1);
+    } else if (editor->cursor.x == editor->number_of_line_digits) {
       buffer_insert_row_at(editor->current_buffer,
                            editor->current_buffer->current_row->prev);
+      editor->current_buffer->current_row =
+        editor->current_buffer->current_row->prev;
+    } else {
+      // break the line at the cursor position
+      buffer_insert_row_at(editor->current_buffer,
+                           editor->current_buffer->current_row);
+      editor->current_buffer->current_row =
+        editor->current_buffer->current_row->next;
+
+      buffer_row_insert_str(editor->current_buffer->current_row, 0,
+                            editor->current_buffer->current_row->prev->data +
+                              editor->current_buffer->start_column +
+                              editor->cursor.x - editor->number_of_line_digits);
+      buffer_row_trim(editor->current_buffer->current_row->prev,
+                      editor->current_buffer->start_column + editor->cursor.x -
+                        editor->number_of_line_digits);
+      editor->cursor.x = 0;
+      editor_move_cursor_y(editor, 1);
+      return;
     }
+    editor->current_buffer->start_column = 0;
+    editor->cursor.x = editor->number_of_line_digits;
+
     return;
   }
   buffer_row_insert_char(editor->current_buffer->current_row,
@@ -483,7 +539,7 @@ void editor_process_key(Editor* editor, int key) {
         }
       } break;
       case EditorState_ProcessingCommand: {
-        int command_result = editor_process_command(&editor->command);
+        int command_result = editor_process_command(editor);
         switch (command_result) {
           case CommandResult_ShouldExit: {
             editor->state = EditorState_Exiting;
