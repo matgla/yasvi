@@ -35,6 +35,8 @@ int main(int argc, char* argv[]) {
     .number_of_buffers = 0,
     .end_line_mode = false,
     .status_bar = NULL,
+    .key_sequence = {0},
+    .repeat_count = 0,
   };
   editor_init(&editor);
   if (argc > 1) {

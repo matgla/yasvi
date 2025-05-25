@@ -17,6 +17,7 @@
 
 #include "buffer.h"
 
+#define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -88,6 +89,7 @@ bool buffer_append_line(Buffer* buffer, const char* line) {
 
   new_row->len = strlen(line);
   new_row->data = (char*)malloc(new_row->len + 1);
+  new_row->allocated_size = new_row->len + 1;  // +1 for null terminator
   if (new_row->data == NULL) {
     free(new_row);
     return false;  // Memory allocation failed
@@ -167,6 +169,26 @@ int buffer_get_line_length(const Buffer* buffer, int index) {
   return row->len;  // Exclude the newline character
 }
 
+void buffer_insert_row_at(Buffer* buffer, BufferRow* row) {
+  BufferRow* new_row = (BufferRow*)malloc(sizeof(BufferRow));
+  if (new_row == NULL) {
+    return;  // Memory allocation failed
+  }
+  new_row->data = (char*)malloc(16);  // Allocate space for an empty string
+  if (new_row->data == NULL) {
+    free(new_row);
+    return;  // Memory allocation failed
+  }
+  new_row->data[0] = '\0';  // Initialize with an empty string
+  new_row->len = 0;
+  new_row->allocated_size = 16;  // Initial size for the data buffer
+  new_row->next = row->next;
+  row->next->prev = new_row;
+  new_row->prev = row;
+  row->next = new_row;
+  buffer->number_of_rows++;
+}
+
 int buffer_row_get_offset_to_first_char(BufferRow* row, int start_index) {
   if (row == NULL || start_index < 0 || start_index >= row->len) {
     return 0;  // Invalid buffer or start index
@@ -196,9 +218,10 @@ int buffer_row_get_offset_to_next_word(const BufferRow* row, int start_index) {
   int stripped = 0;
   bool first_char = false;
 
-  for (int i = start_index; i < row->len; i++) {
+  int offset = 0;
+  for (offset = start_index + offset; offset < row->len; ++offset) {
     if (!first_char) {
-      if (!buffer_row_has_whitespace_at_position(row, i)) {
+      if (!buffer_row_has_whitespace_at_position(row, offset)) {
         first_char = true;  // Found the first non-whitespace character
       } else {
         ++stripped;
@@ -206,10 +229,18 @@ int buffer_row_get_offset_to_next_word(const BufferRow* row, int start_index) {
       }
     }
     if (stripped > 0) {
-      return i - start_index;  // Return the offset to the next word
+      offset = stripped;
+      break;
     }
-    if (first_char && buffer_row_has_whitespace_at_position(row, i)) {
-      return i - start_index + 1;  // Return the offset to the next word
+    if (first_char && buffer_row_has_whitespace_at_position(row, offset)) {
+      break;
+    }
+  }
+
+  // strip leading whitespace
+  for (; offset < row->len; ++offset) {
+    if (!buffer_row_has_whitespace_at_position(row, offset)) {
+      return offset - start_index;
     }
   }
 
@@ -239,5 +270,59 @@ int buffer_row_get_offset_to_prev_word(const BufferRow* row, int start_index) {
     }
   }
 
+  if (first_char) {
+    return -start_index;  // Return the offset to the start of the line
+  }
+
   return 0;
+}
+
+void buffer_row_replace_line(BufferRow* row, const char* new_line) {
+  if (row == NULL || new_line == NULL) {
+    return;  // Invalid row or new line
+  }
+  row->len = strlen(new_line);
+  row->data = realloc(row->data, row->len + 1);
+  if (row->data != NULL) {
+    strcpy(row->data, new_line);
+    row->data[row->len] = '\0';  // Null-terminate the string
+  }
+}
+
+void buffer_row_remove_char(BufferRow* row, int index) {
+  if (row == NULL || index < 0 || index >= row->len) {
+    return;  // Invalid row or index
+  }
+
+  memmove(&row->data[index], &row->data[index + 1], row->len - index);
+  row->len--;
+  row->data[row->len] = '\0';  // Null-terminate the string
+}
+
+void buffer_row_insert_char(BufferRow* row, int index, char c) {
+  if (row == NULL || index < 0 || index > row->len) {
+    return;  // Invalid row or index
+  }
+
+  // reallocation is optimized to reduce realloc overhead
+  if (row->len + 1 >= row->allocated_size) {
+    // Reallocate memory if needed
+    row->allocated_size = row->len + 16;
+    row->data = realloc(row->data, row->allocated_size);
+  }
+
+  if (row->data == NULL) {
+    return;  // Memory allocation failed
+  }
+
+  memmove(&row->data[index + 1], &row->data[index], row->len - index + 1);
+  row->data[index] = c;
+  row->len++;
+}
+
+void buffer_row_append_char(BufferRow* row, char c) {
+  if (row == NULL) {
+    return;  // Invalid row
+  }
+  buffer_row_insert_char(row, row->len, 0);
 }

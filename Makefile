@@ -28,5 +28,12 @@ install: $(TARGET)
 	mkdir -p $(BINDIR)
 	cp $(TARGET) $(BINDIR)
 
+TEST_TARGET := tests
+
+.PHONY: test
+
+test: $(TEST_TARGET)
+	$(MAKE) -C $(TEST_TARGET) run 
+
 clean:
 	rm -rf build

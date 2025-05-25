@@ -22,7 +22,8 @@
 
 typedef struct BufferRow {
   char* data;
-  size_t len;
+  int len;
+  int allocated_size;
   struct BufferRow* next;
   struct BufferRow* prev;
 } BufferRow;
@@ -31,7 +32,7 @@ typedef struct Buffer {
   BufferRow* head;
   BufferRow* tail;
   BufferRow* current_row;
-  size_t number_of_rows;
+  int number_of_rows;
   int start_line;
   int start_column;
 } Buffer;
@@ -44,9 +45,14 @@ BufferRow* buffer_get_first_row(const Buffer* buffer);
 BufferRow* buffer_get_row(const Buffer* buffer, int index);
 int buffer_get_line_length(const Buffer* buffer, int index);
 bool buffer_append_line(Buffer* buffer, const char* line);
+void buffer_insert_row_at(Buffer* buffer, BufferRow* row);
 
 int buffer_row_get_offset_to_first_char(BufferRow* row, int start_index);
 bool buffer_row_has_whitespace_at_position(const BufferRow* row, int position);
 int buffer_row_get_length(const BufferRow* row);
 int buffer_row_get_offset_to_next_word(const BufferRow* row, int start_index);
 int buffer_row_get_offset_to_prev_word(const BufferRow* row, int start_index);
+void buffer_row_replace_line(BufferRow* row, const char* new_line);
+void buffer_row_remove_char(BufferRow* row, int index);
+void buffer_row_insert_char(BufferRow* row, int index, char c);
+void buffer_row_append_char(BufferRow* row, char c);

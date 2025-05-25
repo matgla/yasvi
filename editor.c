@@ -30,7 +30,8 @@ typedef enum {
 } CommandResult;
 
 static void editor_move_cursor_to_end(Editor* editor);
-static void editor_move_cursor_x(Editor* editor, int x);
+static void editor_move_cursor_x(Editor* editor, int x, bool insert_mode);
+static bool editor_process_key_sequence(Editor* editor, int key);
 
 static void editor_set_bar_message(Editor* editor, const char* message) {
   if (editor->status_bar) {
@@ -116,6 +117,12 @@ static void editor_move_cursor_to_start(Editor* editor) {
   editor->current_buffer->start_column = 0;
 }
 
+static void editor_move_to_top(Editor* editor) {
+  Buffer* buffer = editor->current_buffer;
+  editor->current_buffer->current_row = editor->current_buffer->head;
+  editor->cursor.y = 0;
+}
+
 static void editor_move_to_bottom(Editor* editor) {
   Buffer* buffer = editor->current_buffer;
   if (buffer) {
@@ -139,7 +146,7 @@ static void editor_fix_cursor_position_for_line(Editor* editor) {
   if (line_length + editor->number_of_line_digits < editor->cursor.x) {
     editor->cursor.x = editor->number_of_line_digits;
     editor->current_buffer->start_column = 0;
-    editor_move_cursor_x(editor, line_length);
+    editor_move_cursor_x(editor, line_length, false);
   }
 }
 
@@ -155,15 +162,14 @@ static void editor_move_to_previous_row(Editor* editor) {
   }
 }
 
-static void editor_move_cursor_x_to_right(Editor* editor, int x) {
+static void editor_move_cursor_x_to_right(Editor* editor, int x, bool insert_mode) {
   BufferRow* current_line = editor->current_buffer->current_row;
-  const int line_length = buffer_row_get_length(current_line);
+  const int line_length = buffer_row_get_length(current_line) + insert_mode;
   const int chars_till_end = line_length - editor->current_buffer->start_column -
                              editor->cursor.x + editor->number_of_line_digits;
   const int chars_till_window_end = editor->window.width - editor->cursor.x - 1;
   if (x > chars_till_end) {
     x = chars_till_end;
-    x -= buffer_row_has_whitespace_at_position(current_line, line_length);
   }
 
   if (x > chars_till_window_end) {
@@ -197,17 +203,17 @@ static void editor_move_cursor_x_to_left(Editor* editor, int x) {
   }
 }
 
-static void editor_move_cursor_x(Editor* editor, int x) {
-  if (x > 0) {
-    editor_move_cursor_x_to_right(editor, x);
+static void editor_move_cursor_x(Editor* editor, int x, bool insert_mode) {
+  if (x >= 0) {
+    editor_move_cursor_x_to_right(editor, x, insert_mode);
   } else {
     editor_move_cursor_x_to_left(editor, -x);
   }
 }
 
 static void editor_move_cursor_to_end(Editor* editor) {
-  editor_move_cursor_x(editor,
-                       buffer_row_get_length(editor->current_buffer->current_row));
+  editor_move_cursor_x(
+    editor, buffer_row_get_length(editor->current_buffer->current_row), false);
 }
 
 static void editor_process_editor_key(Editor* editor, int key) {
@@ -217,12 +223,12 @@ static void editor_process_editor_key(Editor* editor, int key) {
     case 'h': {
       // Move cursor left
       editor->end_line_mode = false;
-      editor_move_cursor_x(editor, -1);
+      editor_move_cursor_x(editor, -1, false);
       return;
     }
     case 'l': {
       // Move cursor right
-      editor_move_cursor_x(editor, 1);
+      editor_move_cursor_x(editor, 1, false);
       return;
     }
     case 'j': {
@@ -284,7 +290,7 @@ static void editor_process_editor_key(Editor* editor, int key) {
         editor->current_buffer->current_row, editor->cursor.x +
                                                editor->current_buffer->start_column -
                                                editor->number_of_line_digits);
-      editor_move_cursor_x(editor, offset_to_word);
+      editor_move_cursor_x(editor, offset_to_word, false);
       return;
     }
     case 'b': {
@@ -292,10 +298,28 @@ static void editor_process_editor_key(Editor* editor, int key) {
         editor->current_buffer->current_row, editor->cursor.x +
                                                editor->current_buffer->start_column -
                                                editor->number_of_line_digits);
-      editor_move_cursor_x(editor, offset_to_word);
+      editor_move_cursor_x(editor, offset_to_word, false);
+      return;
     }
-
+    case 'g': {
+      editor->key_sequence[0] = 'g';
+      return;
+    }
+    case 'i': {
+      editor->end_line_mode = false;
+      editor->state = EditorState_EditMode;
+      return;
+    }
+    case 'a': {
+      editor->end_line_mode = false;
+      editor->state = EditorState_EditMode;
+      editor_move_cursor_x(editor, 1, true);
+      return;
+    }
     default: {
+      if (key >= '0' && key <= '9') {
+        editor_process_key_sequence(editor, key);
+      }
       return;
     }
   }
@@ -359,9 +383,98 @@ static void editor_draw_buffers(Editor* editor) {
   }
 }
 
+static void editor_process_gkey_sequence(Editor* editor, int key) {
+  if (key == 'g') {
+    editor->key_sequence[0] = 0;
+    editor_move_to_top(editor);
+    editor_fix_cursor_position_for_line(editor);
+  } else {
+    editor->key_sequence[0] = 0;
+  }
+}
+
+static bool editor_process_key_sequence(Editor* editor, int key) {
+  const int current_length = strlen(editor->key_sequence);
+  if (current_length >= sizeof(editor->key_sequence) - 1) {
+    editor->key_sequence[0] = '\0';
+    return true;
+  }
+
+  if (editor->key_sequence[0] == 0 ||
+      (editor->key_sequence[0] >= '0' && editor->key_sequence[0] <= '9')) {
+    if (key >= '0' && key <= '9') {
+      editor->key_sequence[current_length] = (char)key;
+      editor->key_sequence[current_length + 1] = '\0';
+      return true;
+    } else {
+      editor->repeat_count = atoi(editor->key_sequence) - 1;
+      editor->key_sequence[0] = '\0';
+      return false;
+    }
+  }
+  switch (key) {
+    case 27: {
+      editor->key_sequence[0] = '\0';
+      return true;
+    }
+    default: {
+      if (editor->key_sequence[0] == 'g') {
+        editor_process_gkey_sequence(editor, key);
+        return true;
+      }
+      editor->key_sequence[0] = 0;
+      return true;
+    }
+  }
+  return true;
+}
+
+void editor_insert_char(Editor* editor, int key) {
+  char buf[32];
+  snprintf(buf, sizeof(buf), "%d", key);
+  editor_set_bar_message(editor, buf);
+  if (key < 0 || key > 255) {
+    return;  // Invalid character
+  }
+  if (key == KEY_BACKSPACE || key == 127) {
+    // Handle backspace
+    if (editor->cursor.x > editor->number_of_line_digits) {
+      editor_move_cursor_x(editor, -1, true);
+      buffer_row_remove_char(editor->current_buffer->current_row,
+                             editor->current_buffer->start_column +
+                               editor->cursor.x - editor->number_of_line_digits);
+    }
+    return;
+  }
+  if (key == '\n') {
+    if (editor->cursor.x - editor->number_of_line_digits >
+        editor->current_buffer->current_row->len) {
+      buffer_insert_row_at(editor->current_buffer,
+                           editor->current_buffer->current_row);
+      editor->current_buffer->current_row =
+        editor->current_buffer->current_row->next;
+      if (editor->cursor.y < editor->window.height - 3) {
+        editor->cursor.y++;
+      } else {
+        // scroll buffer down
+        editor->current_buffer->start_line++;
+      }
+      editor->cursor.x = editor->number_of_line_digits;
+    } else {
+      buffer_insert_row_at(editor->current_buffer,
+                           editor->current_buffer->current_row->prev);
+    }
+    return;
+  }
+  buffer_row_insert_char(editor->current_buffer->current_row,
+                         editor->current_buffer->start_column + editor->cursor.x -
+                           editor->number_of_line_digits,
+                         (char)key);
+  editor_move_cursor_x(editor, 1, true);
+}
+
 void editor_process_key(Editor* editor, int key) {
   bool done = false;
-  mvaddch(editor->window.height - 1, editor->window.width - 2, (char)key);
   while (!done) {
     switch (editor->state) {
       case EditorState_CollectingCommand: {
@@ -386,6 +499,11 @@ void editor_process_key(Editor* editor, int key) {
         return;
       } break;
       case EditorState_Running:
+        if (editor->key_sequence[0] != 0) {
+          if (editor_process_key_sequence(editor, key)) {
+            return;
+          }
+        }
         switch (key) {
           case ':': {
             if (editor->error_message) {
@@ -397,14 +515,22 @@ void editor_process_key(Editor* editor, int key) {
           } break;
           default: {
             editor_restore_cursor_position(editor);
-            editor_process_editor_key(editor, key);
-            move(editor->cursor.y, editor->cursor.x);
+            for (int i = 0; i < editor->repeat_count + 1; ++i) {
+              editor_process_editor_key(editor, key);
+              move(editor->cursor.y, editor->cursor.x);
+            }
+            editor->repeat_count = 0;
             return;
           }
         }
         break;
       case EditorState_EditMode:
-        editor_restore_cursor_position(editor);
+        if (key == 27) {
+          editor->state = EditorState_Running;
+          return;
+        }
+        editor_insert_char(editor, key);
+
         return;
       case EditorState_Exiting:
         return;
@@ -428,6 +554,10 @@ void editor_draw_status_bar(const Editor* editor) {
   }
   if (editor->status_bar) {
     mvaddstr(editor->window.height - 2, 0, editor->status_bar);
+  }
+  if (editor->key_sequence[0] != 0) {
+    mvaddstr(editor->window.height - 1, editor->window.width - 10,
+             editor->key_sequence);
   }
 }
 
