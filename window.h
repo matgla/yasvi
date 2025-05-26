@@ -17,11 +17,21 @@
 
 #pragma once
 
+#include <ncurses.h>
+
 typedef struct {
   int width;
   int height;
 } Window;
 
-void window_init(Window *window);
-void window_redraw_screen(const Window *window);
-void window_deinit(Window *window);
+void window_init(Window* window);
+void window_redraw_screen(const Window* window);
+void window_deinit(Window* window);
+
+#define COLOR_KEYWORD (COLOR_PAIR(1))
+#define COLOR_STRING (COLOR_PAIR(2))
+#define COLOR_COMMENT (COLOR_PAIR(3) | A_ITALIC | A_BLINK)
+#define COLOR_TYPE (COLOR_PAIR(4))
+#define COLOR_NUMBER (COLOR_PAIR(5))
+#define COLOR_PREPROCESSOR (COLOR_PAIR(6))
+#define COLOR_OTHER (A_NORMAL)

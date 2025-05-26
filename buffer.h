@@ -20,43 +20,43 @@
 #include <stdbool.h>
 #include <stddef.h>
 
-typedef struct BufferRow {
-  char* data;
-  int len;
-  int allocated_size;
-  struct BufferRow* next;
-  struct BufferRow* prev;
-} BufferRow;
+#include "buffer_row.h"
 
 typedef struct Buffer {
   BufferRow* head;
   BufferRow* tail;
   BufferRow* current_row;
   int number_of_rows;
-  int start_line;
-  int start_column;
   char* filename;
 } Buffer;
 
 Buffer* buffer_alloc();
 void buffer_free(Buffer* buffer);
 
-void buffer_load_from_file(Buffer* buffer, const char* filename);
+// buffer getter functions
 BufferRow* buffer_get_first_row(const Buffer* buffer);
 BufferRow* buffer_get_row(const Buffer* buffer, int index);
-int buffer_get_line_length(const Buffer* buffer, int index);
+BufferRow* buffer_get_current_line(const Buffer* buffer);
+
+void buffer_load_from_file(Buffer* buffer, const char* filename);
 bool buffer_append_line(Buffer* buffer, const char* line);
-void buffer_insert_row_at(Buffer* buffer, BufferRow* row);
+
 void buffer_remove_row(Buffer* buffer, BufferRow* row);
 
-int buffer_row_get_offset_to_first_char(BufferRow* row, int start_index);
-bool buffer_row_has_whitespace_at_position(const BufferRow* row, int position);
-int buffer_row_get_length(const BufferRow* row);
-int buffer_row_get_offset_to_next_word(const BufferRow* row, int start_index);
-int buffer_row_get_offset_to_prev_word(const BufferRow* row, int start_index);
-void buffer_row_replace_line(BufferRow* row, const char* new_line);
-void buffer_row_remove_char(BufferRow* row, int index);
-void buffer_row_insert_char(BufferRow* row, int index, char c);
-void buffer_row_insert_str(BufferRow* row, int index, const char* str);
-void buffer_row_trim(BufferRow* row, int start_index);
-void buffer_row_append_char(BufferRow* row, char c);
+// result:
+// +1 - next row is now current
+// -1 - previous row is now current
+// 0 - current row is now NULL
+int buffer_remove_current_row(Buffer* buffer);
+
+// buffer scroll functions
+// +/- lines from the current row
+void buffer_scroll_rows(Buffer* buffer, int lines);
+void buffer_scroll_to_top(Buffer* buffer);
+
+bool buffer_current_is_first_row(const Buffer* buffer);
+bool buffer_current_is_last_row(const Buffer* buffer);
+int buffer_get_number_of_lines(const Buffer* buffer);
+void buffer_break_current_line(Buffer* buffer, int index);
+
+const char* buffer_get_filename(const Buffer* buffer);

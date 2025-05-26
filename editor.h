@@ -46,6 +46,11 @@ typedef struct {
   char* status_bar;
   char key_sequence[32];
   int repeat_count;
+  int tab_size;
+  int start_line;
+  int start_column;
+  bool string_rendering_ongoing;
+  bool multiline_comment_ongoing;
 } Editor;
 
 void editor_process_key(Editor* editor, int key);
@@ -54,3 +59,4 @@ void editor_redraw_screen(Editor* editor);
 void editor_init(Editor* editor);
 void editor_deinit(Editor* editor);
 void editor_load_file(Editor* editor, const char* filename);
+void editor_create_new_file(Editor* editor);

@@ -37,14 +37,20 @@ int main(int argc, char* argv[]) {
     .status_bar = NULL,
     .key_sequence = {0},
     .repeat_count = 0,
+    .tab_size = 2,
+    .start_column = 0,
+    .start_line = 0,
+    .string_rendering_ongoing = false,
   };
   editor_init(&editor);
   if (argc > 1) {
     editor_load_file(&editor, argv[1]);
+  } else {
+    editor_create_new_file(&editor);
   }
 
-  editor_redraw_screen(&editor);
   while (true) {
+    editor_redraw_screen(&editor);
     if ((key = getch()) != ERR) {
       editor_process_key(&editor, key);
     }
@@ -52,7 +58,6 @@ int main(int argc, char* argv[]) {
     if (editor_should_exit(&editor)) {
       break;
     }
-    editor_redraw_screen(&editor);
   }
   editor_deinit(&editor);
   return 0;

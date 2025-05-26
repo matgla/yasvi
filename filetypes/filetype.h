@@ -14,33 +14,3 @@
  You should have received a copy of the GNU General Public License
  along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
-
-#include <ncurses.h>
-
-#include "window.h"
-
-void window_init(Window* window) {
-  initscr();
-  cbreak();
-  raw();
-  keypad(stdscr, TRUE);
-  noecho();
-  clear();
-  refresh();
-  getmaxyx(stdscr, window->height, window->width);
-  start_color();
-  init_pair(1, COLOR_RED, COLOR_BLACK);
-  init_pair(2, COLOR_GREEN, COLOR_BLACK);
-  init_pair(3, 8, COLOR_BLACK);
-  init_pair(4, COLOR_YELLOW, COLOR_BLACK);
-  init_pair(5, COLOR_BLUE, COLOR_BLACK);
-  init_pair(6, COLOR_CYAN, COLOR_BLACK);
-}
-
-void window_deinit(Window* window) {
-  endwin();
-}
-
-void window_redraw_screen(const Window* window) {
-  refresh();
-}

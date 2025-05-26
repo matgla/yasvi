@@ -26,8 +26,6 @@ void test_buffer_alloc(void) {
   TEST_CHECK(buffer->tail == NULL);
   TEST_CHECK(buffer->current_row == NULL);
   TEST_CHECK(buffer->number_of_rows == 0);
-  TEST_CHECK(buffer->start_line == 0);
-  TEST_CHECK(buffer->start_column == 0);
   buffer_free(buffer);
 }
 
