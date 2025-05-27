@@ -5,7 +5,7 @@ SRCS = $(wildcard *.c)
 OBJS = $(patsubst %.c, build/%.o, $(SRCS))
 
 ifeq ($(CC), armv8m-tcc)
-CFLAGS = $(CFLAGS) -I../../rootfs/usr/include -L../../rootfs/lib
+CFLAGS += -I../../rootfs/usr/include -L../../rootfs/lib
 endif
 
 TARGET = build/vi

@@ -172,7 +172,6 @@ void buffer_load_from_file(Buffer* buffer, const char* filename) {
   }
 
   FILE* file = fopen(filename, "r");
-
   buffer->filename = strdup(filename);
   if (file == NULL) {
     buffer_append_line(buffer, "\n");

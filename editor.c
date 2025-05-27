@@ -18,6 +18,7 @@
 #include "editor.h"
 
 #include <ctype.h>
+#include <stdio.h>
 #include <string.h>
 
 #include <ncurses.h>
@@ -293,10 +294,14 @@ static void editor_move_cursor_y(Editor* editor, int y) {
       editor->start_line = 0;
     }
     editor->cursor.y = 1;
-  } else if (editor->cursor.y >= editor->window.height - EDITOR_BOTTOM_BAR_HEIGHT) {
+  } else if (editor->cursor.y >= editor->window.height - EDITOR_BOTTOM_BAR_HEIGHT -
+                                   EDITOR_TOP_BAR_HEIGHT) {
     const int number_of_lines = buffer_get_number_of_lines(editor->current_buffer);
-    editor->start_line += (editor->cursor.y - (editor->window.height + 3));
-    editor->cursor.y = editor->window.height - 3;
+    editor->start_line +=
+      (editor->cursor.y -
+       (editor->window.height - EDITOR_BOTTOM_BAR_HEIGHT - EDITOR_TOP_BAR_HEIGHT));
+    editor->cursor.y =
+      editor->window.height - EDITOR_BOTTOM_BAR_HEIGHT - EDITOR_TOP_BAR_HEIGHT;
     if (editor->start_line > number_of_lines) {
       editor->start_line = number_of_lines - 1;
     }
@@ -601,15 +606,17 @@ static void editor_draw_buffers(Editor* editor) {
   }
   if (editor->current_buffer != NULL) {
     // Draw current buffer
+    const int window_height =
+      editor->window.height - EDITOR_BOTTOM_BAR_HEIGHT - EDITOR_TOP_BAR_HEIGHT;
     BufferRow* row = buffer_get_row(editor->current_buffer, editor->start_line);
-    int max_digits = count_digits(editor->start_line + editor->window.height - 2);
+    int max_digits = count_digits(editor->start_line + window_height);
 
     editor->number_of_line_digits = max_digits + 1;
     if (editor->cursor.x <= editor->number_of_line_digits) {
       editor->cursor.x = editor->number_of_line_digits;
     }
 
-    while (row != NULL && line_number < editor->window.height - 2) {
+    while (row != NULL && line_number < window_height) {
       int row_number = line_number + editor->start_line;
       mvprintw(line_number, 0, "%d ", row_number);
       if (editor->start_column < buffer_row_get_length(row)) {
@@ -618,11 +625,6 @@ static void editor_draw_buffers(Editor* editor) {
         // mvaddnstr(line_number, editor->number_of_line_digits,
         // &row->data[editor->start_column],
         // editor->window.width - editor->number_of_line_digits);
-      } else {
-        // If the start column is beyond the length of the row, just print empty
-        // space
-        mvprintw(editor->window.height - 2, 0, "c: %d, l: '%d'",
-                 editor->start_column, buffer_row_get_length(row));
       }
       line_number++;
       row = row->next;

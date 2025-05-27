@@ -51,7 +51,7 @@ int main(int argc, char* argv[]) {
 
   while (true) {
     editor_redraw_screen(&editor);
-    if ((key = getch()) != ERR) {
+    if ((key = getch()) != -1) {
       editor_process_key(&editor, key);
     }
 

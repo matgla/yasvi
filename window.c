@@ -15,9 +15,11 @@
  along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include <ncurses.h>
-
 #include "window.h"
+
+#include <stdbool.h>
+
+#include <ncurses.h>
 
 void window_init(Window* window) {
   initscr();
