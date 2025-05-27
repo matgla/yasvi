@@ -1,11 +1,15 @@
 CC ?= armv8m-tcc
-CFLAGS = -Wall -g -fsanitize=address -fno-omit-frame-pointer 
-LDFLAGS = -lncurses -fsanitize=address
+CFLAGS = -Wall -Wextra -Werror -g  
+LDFLAGS = -fsanitize=address
 SRCS = $(wildcard *.c)
 OBJS = $(patsubst %.c, build/%.o, $(SRCS))
 
 ifeq ($(CC), armv8m-tcc)
-CFLAGS += -I../../rootfs/usr/include -L../../rootfs/lib
+CFLAGS += -I../../rootfs/usr/include
+LDFLAGS += -L../../rootfs/lib -lncurses
+else
+CFLAGS += -fsanitize=address -fno-omit-frame-pointer
+LDFLAGS += -L../../libs/yasos_curses/build -lncurses
 endif
 
 TARGET = build/vi

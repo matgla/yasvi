@@ -40,9 +40,11 @@ void window_init(Window* window) {
 }
 
 void window_deinit(Window* window) {
+  (void)window;
   endwin();
 }
 
 void window_redraw_screen(const Window* window) {
+  (void)window;
   refresh();
 }

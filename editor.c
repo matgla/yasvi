@@ -53,12 +53,12 @@ static int editor_get_cursor_x(const Editor* editor) {
   return editor->cursor.x + editor->start_column - editor->number_of_line_digits;
 }
 
-static int editor_get_cursor_y(const Editor* editor) {
-  if (editor->cursor.y + editor->start_line < EDITOR_TOP_BAR_HEIGHT) {
-    return 0;
-  }
-  return editor->cursor.y + editor->start_line - EDITOR_TOP_BAR_HEIGHT;
-}
+// static int editor_get_cursor_y(const Editor* editor) {
+//   if (editor->cursor.y + editor->start_line < EDITOR_TOP_BAR_HEIGHT) {
+//     return 0;
+//   }
+//   return editor->cursor.y + editor->start_line - EDITOR_TOP_BAR_HEIGHT;
+// }
 
 static void editor_home_cursor_x(Editor* editor) {
   editor->cursor.x = editor->number_of_line_digits;
@@ -75,12 +75,12 @@ static void editor_home_cursor_xy(Editor* editor) {
   editor_home_cursor_y(editor);
 }
 
-static void editor_set_bar_message(Editor* editor, const char* message) {
-  if (editor->status_bar) {
-    free(editor->status_bar);
-  }
-  editor->status_bar = strdup(message);
-}
+// static void editor_set_bar_message(Editor* editor, const char* message) {
+//   if (editor->status_bar) {
+//     free(editor->status_bar);
+//   }
+//   editor->status_bar = strdup(message);
+// }
 
 // true if editor loop should continue
 static bool editor_collect_command(Editor* editor, int key) {
@@ -103,7 +103,7 @@ static bool editor_collect_command(Editor* editor, int key) {
 
 static void editor_clear_error_message(Editor* editor) {
   if (editor->error_message) {
-    for (int i = 0; i < strlen(editor->error_message); ++i) {
+    for (size_t i = 0; i < strlen(editor->error_message); ++i) {
       mvaddch(editor->window.height - 1, 1 + i, ' ');
     }
     free(editor->error_message);
@@ -501,6 +501,7 @@ HighlightToken editor_get_highlight_token(const char* token) {
 }
 
 int editor_highlight_token(Editor* editor, const char* token) {
+  (void)editor;
   HighlightToken token_type = editor_get_highlight_token(token);
   switch (token_type) {
     case HighlightToken_Keyword:
@@ -661,7 +662,7 @@ static void editor_process_dkey_sequence(Editor* editor, int key) {
 }
 
 static bool editor_process_key_sequence(Editor* editor, int key) {
-  const int current_length = strlen(editor->key_sequence);
+  const size_t current_length = strlen(editor->key_sequence);
   if (current_length >= sizeof(editor->key_sequence) - 1) {
     editor->key_sequence[0] = '\0';
     return true;
