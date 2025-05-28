@@ -25,7 +25,7 @@ void window_init(Window* window) {
   initscr();
   cbreak();
   raw();
-  keypad(stdscr, TRUE);
+  keypad(stdscr, true);
   noecho();
   clear();
   refresh();

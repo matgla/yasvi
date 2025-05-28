@@ -288,22 +288,24 @@ static void editor_move_cursor_x(Editor* editor, int x, bool insert_mode) {
 
 static void editor_move_cursor_y(Editor* editor, int y) {
   editor->cursor.y += y;
-  if (editor->cursor.y < EDITOR_TOP_BAR_HEIGHT) {
-    editor->start_line += editor->cursor.y;
+  if (editor->cursor.y <= EDITOR_TOP_BAR_HEIGHT) {
+    editor->start_line += (editor->cursor.y - 1);
     if (editor->start_line < 0) {
       editor->start_line = 0;
     }
     editor->cursor.y = 1;
-  } else if (editor->cursor.y >= editor->window.height - EDITOR_BOTTOM_BAR_HEIGHT -
-                                   EDITOR_TOP_BAR_HEIGHT) {
+  } else if (editor->cursor.y > editor->window.height - EDITOR_BOTTOM_BAR_HEIGHT -
+                                  EDITOR_TOP_BAR_HEIGHT) {
     const int number_of_lines = buffer_get_number_of_lines(editor->current_buffer);
     editor->start_line +=
       (editor->cursor.y -
        (editor->window.height - EDITOR_BOTTOM_BAR_HEIGHT - EDITOR_TOP_BAR_HEIGHT));
     editor->cursor.y =
       editor->window.height - EDITOR_BOTTOM_BAR_HEIGHT - EDITOR_TOP_BAR_HEIGHT;
-    if (editor->start_line > number_of_lines) {
-      editor->start_line = number_of_lines - 1;
+    if (editor->start_line > number_of_lines - editor->window.height +
+                               EDITOR_BOTTOM_BAR_HEIGHT + EDITOR_TOP_BAR_HEIGHT) {
+      editor->start_line = number_of_lines - editor->window.height +
+                           EDITOR_BOTTOM_BAR_HEIGHT + EDITOR_TOP_BAR_HEIGHT;
     }
   }
 }
@@ -546,7 +548,8 @@ static void editor_decorate_and_draw_line(Editor* editor,
 
     int attr = editor_highlight_token(editor, token);
 
-    if (attr != A_NORMAL) {
+    if (attr != A_NORMAL && !editor->string_rendering_ongoing &&
+        !editor->multiline_comment_ongoing && !comment_ongoing) {
       attron(attr);
       mvaddnstr(line_number, editor->number_of_line_digits + written_length,
                 line + written_length, write_length);
@@ -562,10 +565,6 @@ static void editor_decorate_and_draw_line(Editor* editor,
           } else {
             editor->string_rendering_ongoing = false;
           }
-        } else if (editor->string_rendering_ongoing) {
-          attr = COLOR_STRING;
-        } else if (isdigit(token[i])) {
-          attr = COLOR_NUMBER;
         } else if (token[i] == '/') {
           if (i + 1 < token_length && token[i + 1] == '*') {
             attr = COLOR_COMMENT;
@@ -582,6 +581,10 @@ static void editor_decorate_and_draw_line(Editor* editor,
           attr = COLOR_COMMENT;
         } else if (comment_ongoing) {
           attr = COLOR_COMMENT;
+        } else if (editor->string_rendering_ongoing) {
+          attr = COLOR_STRING;
+        } else if (isdigit(token[i])) {
+          attr = COLOR_NUMBER;
         }
         attron(attr);
         mvaddch(line_number, editor->number_of_line_digits + written_length,
@@ -608,7 +611,7 @@ static void editor_draw_buffers(Editor* editor) {
   if (editor->current_buffer != NULL) {
     // Draw current buffer
     const int window_height =
-      editor->window.height - EDITOR_BOTTOM_BAR_HEIGHT - EDITOR_TOP_BAR_HEIGHT;
+      editor->window.height - EDITOR_BOTTOM_BAR_HEIGHT - EDITOR_TOP_BAR_HEIGHT + 1;
     BufferRow* row = buffer_get_row(editor->current_buffer, editor->start_line);
     int max_digits = count_digits(editor->start_line + window_height);
 
@@ -623,9 +626,6 @@ static void editor_draw_buffers(Editor* editor) {
       if (editor->start_column < buffer_row_get_length(row)) {
         editor_decorate_and_draw_line(editor, line_number,
                                       &row->data[editor->start_column]);
-        // mvaddnstr(line_number, editor->number_of_line_digits,
-        // &row->data[editor->start_column],
-        // editor->window.width - editor->number_of_line_digits);
       }
       line_number++;
       row = row->next;
