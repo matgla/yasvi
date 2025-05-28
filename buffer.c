@@ -57,6 +57,7 @@ static void buffer_insert_below_current(Buffer* buffer) {
   new_row->len = 0;
   new_row->allocated_size = 16;  // Initial size for the data buffer
   new_row->data = (char*)malloc(new_row->allocated_size);
+  new_row->dirty = true;
   if (new_row->data == NULL) {
     free(new_row);
     return;  // Memory allocation failed

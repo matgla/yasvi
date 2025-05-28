@@ -65,9 +65,27 @@ static void editor_home_cursor_x(Editor* editor) {
   editor->start_column = 0;
 }
 
+static void editor_mark_dirty_whole_screen(Editor* editor) {
+  const int number_of_lines =
+    editor->window.height - EDITOR_TOP_BAR_HEIGHT - EDITOR_BOTTOM_BAR_HEIGHT;
+  BufferRow* row = buffer_get_row(editor->current_buffer, editor->start_line);
+  if (row == NULL) {
+    return;  // No rows in the buffer
+  }
+  for (int y = 0; y < number_of_lines; ++y) {
+    buffer_row_mark_dirty(row);
+    if (row->next != NULL) {
+      row = row->next;
+    } else {
+      break;  // No more rows to mark
+    }
+  }
+}
+
 static void editor_home_cursor_y(Editor* editor) {
   editor->cursor.y = 1;
   editor->start_line = 0;
+  editor_mark_dirty_whole_screen(editor);
 }
 
 static void editor_home_cursor_xy(Editor* editor) {
@@ -308,6 +326,7 @@ static void editor_move_cursor_y(Editor* editor, int y) {
                            EDITOR_BOTTOM_BAR_HEIGHT + EDITOR_TOP_BAR_HEIGHT;
     }
   }
+  editor_mark_dirty_whole_screen(editor);
 }
 
 static void editor_move_cursor_to_end(Editor* editor) {
@@ -622,10 +641,17 @@ static void editor_draw_buffers(Editor* editor) {
 
     while (row != NULL && line_number < window_height) {
       int row_number = line_number + editor->start_line;
-      mvprintw(line_number, 0, "%d ", row_number);
-      if (editor->start_column < buffer_row_get_length(row)) {
-        editor_decorate_and_draw_line(editor, line_number,
-                                      &row->data[editor->start_column]);
+      if (row->dirty) {
+        move(line_number, 0);
+        clrtoeol();
+        mvprintw(line_number, 0, "%d ", row_number);
+        if (editor->start_column < buffer_row_get_length(row)) {
+          editor_decorate_and_draw_line(editor, line_number,
+                                        &row->data[editor->start_column]);
+          mvprintw(line_number, editor->number_of_line_digits,
+                   &row->data[editor->start_column]);
+        }
+        row->dirty = false;
       }
       line_number++;
       row = row->next;
@@ -859,7 +885,7 @@ void editor_draw_status_bar(const Editor* editor) {
 }
 
 void editor_redraw_screen(Editor* editor) {
-  clear();
+  // clear();
   editor_draw_buffers(editor);
   editor_draw_status_bar(editor);
   switch (editor->state) {

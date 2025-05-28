@@ -26,6 +26,7 @@ typedef struct BufferRow {
   int allocated_size;
   struct BufferRow* next;
   struct BufferRow* prev;
+  bool dirty;
 } BufferRow;
 
 bool buffer_row_has_whitespace_at_position(const BufferRow* row, int position);
@@ -44,3 +45,5 @@ void buffer_row_break_line(BufferRow* row, int index);
 
 BufferRow* buffer_row_get_next(const BufferRow* row);
 BufferRow* buffer_row_get_prev(const BufferRow* row);
+
+void buffer_row_mark_dirty(BufferRow* row);

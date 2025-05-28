@@ -124,6 +124,7 @@ void buffer_row_replace_line(BufferRow* row, const char* new_line) {
     strcpy(row->data, new_line);
     row->data[row->len] = '\0';  // Null-terminate the string
   }
+  row->dirty = true;
 }
 
 bool buffer_row_remove_char(BufferRow* row, int index) {
@@ -134,6 +135,7 @@ bool buffer_row_remove_char(BufferRow* row, int index) {
   memmove(&row->data[index], &row->data[index + 1], row->len - index - 1);
   row->len--;
   row->data[row->len] = '\0';  // Null-terminate the string
+  row->dirty = true;
   return true;
 }
 
@@ -156,6 +158,7 @@ void buffer_row_insert_char(BufferRow* row, int index, char c) {
   memmove(&row->data[index + 1], &row->data[index], row->len - index + 1);
   row->data[index] = c;
   row->len++;
+  row->dirty = true;
 }
 
 void buffer_row_append_char(BufferRow* row, char c) {
@@ -172,6 +175,7 @@ void buffer_row_trim(BufferRow* row, int start_index) {
 
   row->len = start_index;
   row->data[row->len] = '\0';  // Null-terminate the string
+  row->dirty = true;
 }
 
 BufferRow* buffer_row_get_next(const BufferRow* row) {
@@ -186,4 +190,9 @@ BufferRow* buffer_row_get_prev(const BufferRow* row) {
     return NULL;
   }
   return row->prev;
+}
+
+void buffer_row_mark_dirty(BufferRow* row) {
+  if (row)
+    row->dirty = true;  // Mark the row as dirty
 }
