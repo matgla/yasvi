@@ -20,8 +20,11 @@
 #include <stdbool.h>
 #include <stddef.h>
 
+#include "highlight.h"
+
 typedef struct BufferRow {
   char* data;
+  char* highlight_data;
   int len;
   int allocated_size;
   struct BufferRow* next;
@@ -47,3 +50,9 @@ BufferRow* buffer_row_get_next(const BufferRow* row);
 BufferRow* buffer_row_get_prev(const BufferRow* row);
 
 void buffer_row_mark_dirty(BufferRow* row);
+
+void buffer_row_set_highlight(BufferRow* row,
+                              int column_start,
+                              int column_end,
+                              EHighlightToken token);
+void buffer_row_highlight_line(BufferRow* row);

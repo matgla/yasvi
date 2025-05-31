@@ -57,8 +57,16 @@ static void buffer_insert_below_current(Buffer* buffer) {
   new_row->len = 0;
   new_row->allocated_size = 16;  // Initial size for the data buffer
   new_row->data = (char*)malloc(new_row->allocated_size);
-  new_row->dirty = true;
-  if (new_row->data == NULL) {
+  new_row->highlight_data = (char*)malloc(new_row->allocated_size);
+  memset(new_row->highlight_data, 0, new_row->allocated_size);
+  new_row->dirty = 1;
+  if (new_row->data == NULL || new_row->highlight_data == NULL) {
+    if (new_row->data) {
+      free(new_row->data);
+    }
+    if (new_row->highlight_data) {
+      free(new_row->highlight_data);
+    }
     free(new_row);
     return;  // Memory allocation failed
   }
@@ -94,6 +102,7 @@ void buffer_free(Buffer* buffer) {
     while (current) {
       BufferRow* next = current->next;
       free(current->data);
+      free(current->highlight_data);
       free(current);
       current = next;
     }
@@ -118,7 +127,14 @@ bool buffer_append_line(Buffer* buffer, const char* line) {
   new_row->len = strlen(line);
   new_row->allocated_size = new_row->len + 1;
   new_row->data = (char*)malloc(new_row->allocated_size);
-  if (new_row->data == NULL) {
+  new_row->highlight_data = (char*)malloc(new_row->allocated_size);
+  if (new_row->data == NULL || new_row->highlight_data == NULL) {
+    if (new_row->data) {
+      free(new_row->data);
+    }
+    if (new_row->highlight_data) {
+      free(new_row->highlight_data);
+    }
     free(new_row);
     return false;  // Memory allocation failed
   }
@@ -137,6 +153,8 @@ bool buffer_append_line(Buffer* buffer, const char* line) {
     new_row->data[i] = '\0';  // Null-terminate the string
     new_row->len--;           // Reduce length for trailing newlines
   }
+  new_row->dirty = true;               // Mark the row as dirty
+  buffer_row_highlight_line(new_row);  // Highlight the new row
 
   return true;
 }

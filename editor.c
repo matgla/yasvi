@@ -24,6 +24,7 @@
 #include <ncurses.h>
 
 #include "command.h"
+#include "highlight.h"
 
 #define EDITOR_TOP_BAR_HEIGHT 1
 // 1 is for command line
@@ -46,19 +47,34 @@ static void editor_home_cursor_y(Editor* editor);
 static void editor_home_cursor_xy(Editor* editor);
 static void editor_fix_cursor_position(Editor* editor);
 
+#ifdef __GNUC__
+char* itoa(int n, char* s, int base) {
+  char* p = s;
+  int sign = n < 0 ? -1 : 1;
+  if (sign < 0)
+    n = -n;
+  do {
+    *p++ = "0123456789abcdef"[n % base];
+    n /= base;
+  } while (n);
+  if (sign < 0)
+    *p++ = '-';
+  *p-- = '\0';
+  while (s < p) {
+    char tmp = *s;
+    *s++ = *p;
+    *p-- = tmp;
+  }
+  return s;
+}
+#endif
+
 static int editor_get_cursor_x(const Editor* editor) {
   if (editor->cursor.x + editor->start_column < editor->number_of_line_digits) {
     return 0;
   }
   return editor->cursor.x + editor->start_column - editor->number_of_line_digits;
 }
-
-// static int editor_get_cursor_y(const Editor* editor) {
-//   if (editor->cursor.y + editor->start_line < EDITOR_TOP_BAR_HEIGHT) {
-//     return 0;
-//   }
-//   return editor->cursor.y + editor->start_line - EDITOR_TOP_BAR_HEIGHT;
-// }
 
 static void editor_home_cursor_x(Editor* editor) {
   editor->cursor.x = editor->number_of_line_digits;
@@ -75,6 +91,22 @@ static void editor_mark_dirty_whole_screen(Editor* editor) {
   for (int y = 0; y < number_of_lines; ++y) {
     buffer_row_mark_dirty(row);
     if (row->next != NULL) {
+      row = row->next;
+    } else {
+      break;  // No more rows to mark
+    }
+  }
+}
+
+static void editor_mark_dirty_from_cursor(Editor* editor) {
+  BufferRow* row = buffer_get_row(editor->current_buffer, editor->start_line);
+  if (row == NULL) {
+    return;  // No rows in the buffer
+  }
+  for (int y = editor->cursor.y - editor->start_line; y < editor->window.height;
+       ++y) {
+    if (row != NULL) {
+      buffer_row_mark_dirty(row);
       row = row->next;
     } else {
       break;  // No more rows to mark
@@ -305,6 +337,7 @@ static void editor_move_cursor_x(Editor* editor, int x, bool insert_mode) {
 }
 
 static void editor_move_cursor_y(Editor* editor, int y) {
+  const int previous_start = editor->start_line;
   editor->cursor.y += y;
   if (editor->cursor.y <= EDITOR_TOP_BAR_HEIGHT) {
     editor->start_line += (editor->cursor.y - 1);
@@ -326,7 +359,9 @@ static void editor_move_cursor_y(Editor* editor, int y) {
                            EDITOR_BOTTOM_BAR_HEIGHT + EDITOR_TOP_BAR_HEIGHT;
     }
   }
-  editor_mark_dirty_whole_screen(editor);
+  if (editor->start_line != previous_start) {
+    editor_mark_dirty_whole_screen(editor);
+  }
 }
 
 static void editor_move_cursor_to_end(Editor* editor) {
@@ -467,156 +502,53 @@ static int count_digits(int number) {
   }
   return count;
 }
-// TODO move to a separate file
-typedef enum HighlightToken {
-  HighlightToken_Keyword,
-  HighlightToken_Type,
-  HighlightToken_String,
-  HighlightToken_Comment,
-  HighlightToken_Preprocessor,
-  HighlightToken_Number,
-  HighlightToken_Other
-} HighlightToken;
 
-const char* keywords[] = {
-  "if",       "else",     "while",    "for",     "return",   "break",
-  "continue", "switch",   "case",     "default", "do",       "goto",
-  "sizeof",   "typedef",  "struct",   "union",   "enum",     "static",
-  "extern",   "const",    "volatile", "inline",  "asm",      "auto",
-  "register", "restrict", "alignas",  "alignof", "noexcept", "thread_local",
+static const char* highlight_styles[] = {
+  "\e[0;39;49m", "\e[1;34;40m", "\e[0;32;40m", "\e[0;36;40m",
+  "\e[1;35;40m", "\e[1;31;40m", "\e[0;35;40m", "\e[0;33;40m",
 };
-const int keyword_length = sizeof(keywords) / sizeof(keywords[0]);
 
-const char* types_keywords[] = {"int", "float", "double", "char", "void"};
-const int types_length = sizeof(types_keywords) / sizeof(types_keywords[0]);
-
-const char* prepreocessor_keywords[] = {"#include", "#define", "#undef", "#if",
-                                        "#ifdef",   "#ifndef", "#else",  "#elif",
-                                        "#endif",   "#line",   "#error", "#pragma"};
-const int prepreocessor_length =
-  sizeof(prepreocessor_keywords) / sizeof(prepreocessor_keywords[0]);
-
-HighlightToken editor_get_highlight_token(const char* token) {
-  if (token == NULL || strlen(token) == 0) {
-    return HighlightToken_Other;
+static int editor_write_highlight_style(Editor* editor,
+                                        EHighlightToken token,
+                                        char* buffer,
+                                        int n) {
+  if (n <= 11) {
+    return 0;
   }
 
-  for (int i = 0; i < keyword_length; i++) {
-    if (strcmp(token, keywords[i]) == 0) {
-      return HighlightToken_Keyword;
-    }
+  if (token < 0 || token >= EHighlightToken_Count) {
+    token = EHighlightToken_Normal;  // Default to normal if out of range
   }
-
-  for (int i = 0; i < types_length; i++) {
-    if (strcmp(token, types_keywords[i]) == 0) {
-      return HighlightToken_Type;
-    }
-  }
-
-  for (int i = 0; i < prepreocessor_length; i++) {
-    if (strcmp(token, prepreocessor_keywords[i]) == 0) {
-      return HighlightToken_Preprocessor;
-    }
-  }
-  return HighlightToken_Other;
+  const char* style = highlight_styles[token];
+  memcpy(buffer, style, 10);
+  buffer[10] = '\0';  // Null-terminate the string
+  return 10;
 }
-
-int editor_highlight_token(Editor* editor, const char* token) {
-  (void)editor;
-  HighlightToken token_type = editor_get_highlight_token(token);
-  switch (token_type) {
-    case HighlightToken_Keyword:
-      return COLOR_KEYWORD;
-    case HighlightToken_String:
-      return COLOR_STRING;
-    case HighlightToken_Comment:
-      return COLOR_COMMENT;
-    case HighlightToken_Type:
-      return COLOR_TYPE;
-    case HighlightToken_Preprocessor:
-      return COLOR_PREPROCESSOR;
-    default:
-      return A_NORMAL;
-  }
-  return 0;
-}
-// endtodo
 
 static void editor_decorate_and_draw_line(Editor* editor,
                                           int line_number,
-                                          const char* line) {
-  const int max_line_length = editor->window.width - editor->number_of_line_digits;
-  int written_length = 0;
-  // tokenize, color during rendering
-  char* decorated_line = strdup(line);
-  char* token = strtok(decorated_line, " \t");
-  char* prev = decorated_line;
-  bool comment_ongoing = false;
-  while (token != NULL && written_length < max_line_length) {
-    const int offset_before_token = token - prev;
-    int write_length = offset_before_token + written_length < max_line_length
-                         ? offset_before_token
-                         : max_line_length - written_length;
-    mvaddnstr(line_number, editor->number_of_line_digits + written_length,
-              line + written_length, write_length);
-    written_length += write_length;
-    const int token_length = strlen(token);
-    write_length = token_length + written_length < max_line_length
-                     ? token_length
-                     : max_line_length - written_length;
-
-    int attr = editor_highlight_token(editor, token);
-
-    if (attr != A_NORMAL && !editor->string_rendering_ongoing &&
-        !editor->multiline_comment_ongoing && !comment_ongoing) {
-      attron(attr);
-      mvaddnstr(line_number, editor->number_of_line_digits + written_length,
-                line + written_length, write_length);
-      attroff(attr);
-      written_length += write_length;
-    } else {
-      for (int i = 0; i < write_length; ++i) {
-        int attr = A_NORMAL;
-        if (token[i] == '\"' || token[i] == '\'') {
-          attr = COLOR_STRING;
-          if (!editor->string_rendering_ongoing) {
-            editor->string_rendering_ongoing = true;
-          } else {
-            editor->string_rendering_ongoing = false;
-          }
-        } else if (token[i] == '/') {
-          if (i + 1 < token_length && token[i + 1] == '*') {
-            attr = COLOR_COMMENT;
-            editor->multiline_comment_ongoing = true;
-          } else if (i - 1 >= 0 && token[i - 1] == '*') {
-            attr = COLOR_COMMENT;
-            editor->multiline_comment_ongoing = false;
-          } else if ((i + 1 < token_length && token[i + 1] == '/') ||
-                     (i - 1 >= 0 && token[i - 1] == '/')) {
-            attr = COLOR_COMMENT;
-            comment_ongoing = true;
-          }
-        } else if (editor->multiline_comment_ongoing) {
-          attr = COLOR_COMMENT;
-        } else if (comment_ongoing) {
-          attr = COLOR_COMMENT;
-        } else if (editor->string_rendering_ongoing) {
-          attr = COLOR_STRING;
-        } else if (isdigit(token[i])) {
-          attr = COLOR_NUMBER;
-        }
-        attron(attr);
-        mvaddch(line_number, editor->number_of_line_digits + written_length,
-                token[i]);
-        attroff(attr);
-        written_length++;
-      }
+                                          BufferRow* row,
+                                          char* buffer,
+                                          int n) {
+  const char* line = &row->data[editor->start_column];
+  const char* hl = &row->highlight_data[editor->start_column];
+  int index = 0;
+  EHighlightToken token = EHighlightToken_Normal;
+  for (int i = 0; i < row->len - editor->start_column && index < n; ++i) {
+    if (line[i] == '\0') {
+      break;  // End of line
     }
-
-    prev = token + token_length;
-    token = strtok(NULL, " \t");
+    if (token != hl[i]) {
+      token = hl[i];
+      index +=
+        editor_write_highlight_style(editor, token, &buffer[index], n - index);
+    }
+    if (index >= n - 1) {
+      break;  // No more space in the buffer
+    }
+    buffer[index++] = line[i];
   }
-  free(decorated_line);
+  buffer[index] = '\0';
 }
 
 static void editor_draw_buffers(Editor* editor) {
@@ -641,16 +573,25 @@ static void editor_draw_buffers(Editor* editor) {
 
     while (row != NULL && line_number < window_height) {
       int row_number = line_number + editor->start_line;
+
       if (row->dirty) {
-        move(line_number, 0);
-        clrtoeol();
-        mvprintw(line_number, 0, "%d ", row_number);
-        if (editor->start_column < buffer_row_get_length(row)) {
-          editor_decorate_and_draw_line(editor, line_number,
-                                        &row->data[editor->start_column]);
-          mvprintw(line_number, editor->number_of_line_digits,
-                   &row->data[editor->start_column]);
+        static char line_buffer[1024];
+        memcpy(line_buffer, highlight_styles[EHighlightToken_Normal], 10);
+        itoa(row_number, line_buffer + 10, 10);
+        int line_length = strlen(line_buffer);
+        int i = 0;
+        for (i = 0; i < editor->number_of_line_digits - line_length + 11; ++i) {
+          line_buffer[line_length] = ' ';
+          ++line_length;
         }
+        line_buffer[line_length] = '\0';
+        if (editor->start_column < buffer_row_get_length(row)) {
+          editor_decorate_and_draw_line(editor, line_number, row,
+                                        &line_buffer[line_length],
+                                        sizeof(line_buffer) - line_length);
+        }
+        mvaddstr(line_number, 0, line_buffer);
+        clrtoeol();
         row->dirty = false;
       }
       line_number++;
@@ -683,6 +624,8 @@ static void editor_process_dkey_sequence(Editor* editor, int key) {
       }
     }
   }
+
+  editor_mark_dirty_from_cursor(editor);
   editor_fix_cursor_position(editor);
   editor->key_sequence[0] = 0;
 }
@@ -770,6 +713,7 @@ void editor_insert_char(Editor* editor, int key) {
       return;
     }
     case '\n': {
+      editor_mark_dirty_from_cursor(editor);
       buffer_break_current_line(editor->current_buffer, editor_get_cursor_x(editor));
       editor_move_cursor_y(editor, 1);
       editor_home_cursor_x(editor);
@@ -793,6 +737,7 @@ void editor_insert_char(Editor* editor, int key) {
 
 void editor_process_key(Editor* editor, int key) {
   bool done = false;
+  editor->key = key;
   while (!done) {
     switch (editor->state) {
       case EditorState_CollectingCommand: {
@@ -882,10 +827,13 @@ void editor_draw_status_bar(const Editor* editor) {
     mvaddstr(editor->window.height - 1, editor->window.width - 10,
              editor->key_sequence);
   }
+  mvprintw(editor->window.height - 1, editor->window.width - 30, "'%c'(%d) ",
+           editor->key, editor->key);
 }
 
 void editor_redraw_screen(Editor* editor) {
   // clear();
+  curs_set(0);
   editor_draw_buffers(editor);
   editor_draw_status_bar(editor);
   switch (editor->state) {
@@ -897,6 +845,7 @@ void editor_redraw_screen(Editor* editor) {
       break;
   }
   window_redraw_screen(&editor->window);
+  curs_set(1);
 }
 
 void editor_init(Editor* editor) {

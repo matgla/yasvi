@@ -50,13 +50,16 @@ int main(int argc, char* argv[]) {
   }
 
   while (true) {
-    editor_redraw_screen(&editor);
-    if ((key = getch()) != -1) {
-      editor_process_key(&editor, key);
+    if (key >= 0) {
+      editor_redraw_screen(&editor);
     }
+    key = getch();
+    if (key != -1) {
+      editor_process_key(&editor, key);
 
-    if (editor_should_exit(&editor)) {
-      break;
+      if (editor_should_exit(&editor)) {
+        break;
+      }
     }
   }
   editor_deinit(&editor);

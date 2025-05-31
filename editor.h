@@ -51,6 +51,7 @@ typedef struct {
   int start_column;
   bool string_rendering_ongoing;
   bool multiline_comment_ongoing;
+  int key;
 } Editor;
 
 void editor_process_key(Editor* editor, int key);
