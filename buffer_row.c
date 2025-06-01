@@ -33,71 +33,127 @@ static const char* symbols = "+-*/{}<>=";
 static const char* whitespace_symbols = " \f\n\r\t\v";
 static const char* include_symbols = "\"<>";
 static const char* string_symbols = "\"'";
-
 void buffer_row_highlight_line(BufferRow* row) {
   if (row == NULL) {
     return;  // Invalid row
   }
   int preprocessor_started = 0;
   int include_started = 0;
+  int string_chars_in_row = 0;
   int string_started = 0;
-  int multiline_string = 0;
-  for (int i = 0; i < row->len; ++i) {
-    if (string_started || multiline_string) {
-      row->highlight_data[i] = (char)EHighlightToken_String;
-      if (row->data[i] == '\\' && (multiline_string == 0)) {
-        multiline_string = string_started;
-        // how to handle lines below?
-      } else if (row->data[i] == string_started ||
-                 row->data[i] == multiline_string) {
-        string_started = 0;
-        multiline_string = 0;
+  int escape_sequence_started = 0;
+  bool process_next_row = true;
+
+  while (process_next_row) {
+    if (row == NULL) {
+      break;
+    }
+
+    int single_line_comment_started = 0;
+    row->dirty = true;
+    process_next_row = false;
+    if (row->prev) {
+      if (row->prev->highlight_string_open) {
+        string_started =
+          row->prev->highlight_string_open;  // Continue from previous row
       }
-    } else if (include_started) {
-      if (strspn(&row->data[i], include_symbols) != 0) {
-        ++include_started;
-      }
-      if (include_started == 3) {
-        include_started = 0;  // Reset after processing include
-      }
-      row->highlight_data[i] = (char)EHighlightToken_String;
-      continue;
-    } else if (preprocessor_started) {
-      if (strchr(whitespace_symbols, row->data[i]) != NULL) {
-        row->highlight_data[i] = (char)EHighlightToken_Normal;
-        if (strstr(&row->data[preprocessor_started], "include") ==
-            &row->data[preprocessor_started]) {
-          include_started = 1;
+    }
+
+    for (int i = 0; i < row->len; ++i) {
+      if (single_line_comment_started ||
+          (row->prev != NULL && row->prev->highlight_comment_open)) {
+        if (row->data[i] == '/' && i > 1 && row->data[i - 1] == '*') {
+          row->prev->highlight_comment_open = 0;  // End of comment
         }
-        preprocessor_started = 0;
-        continue;
-      }
-      row->highlight_data[i] = (char)EHighlightToken_Preprocessor;
-      continue;
-    } else if (strchr(string_symbols, row->data[i]) != NULL) {
-      if (row->prev != NULL) {
-        if (row->prev->data[row->prev->len - 1] == '\\') {
-          // that's end of
-          for (int i = 0; i < row->len; ++i) {
-            row->highlight_data[i] = (char)EHighlightToken_String;
+        row->highlight_data[i] = (char)EHighlightToken_Comment;
+      } else if (string_started) {
+        row->highlight_data[i] = (char)EHighlightToken_String;
+        if (row->data[i] == '\\') {
+          row->highlight_data[i] = (char)EHighlightToken_Digit;
+          if (i == row->len - 1) {
+            escape_sequence_started = 0;
+            row->highlight_string_open = string_started;
+            process_next_row = true;
+          } else {
+            escape_sequence_started = 1;
           }
+        } else if (escape_sequence_started) {
+          escape_sequence_started = 0;
+          row->highlight_data[i] = (char)EHighlightToken_Digit;
+          if (strchr(whitespace_symbols, row->data[i]) != NULL) {
+            row->highlight_string_open = string_started;
+            process_next_row = true;
+          }
+        } else if (row->data[i] == string_started) {
+          string_started = 0;
+          row->highlight_string_open = 0;
+        }
+      } else if (include_started) {
+        if (strspn(&row->data[i], include_symbols) != 0) {
+          ++include_started;
+        }
+        if (include_started == 3) {
+          include_started = 0;  // Reset after processing include
+        }
+        row->highlight_data[i] = (char)EHighlightToken_String;
+        continue;
+      } else if (preprocessor_started) {
+        if (strchr(whitespace_symbols, row->data[i]) != NULL) {
+          row->highlight_data[i] = (char)EHighlightToken_Normal;
+          if (strstr(&row->data[preprocessor_started], "include") ==
+              &row->data[preprocessor_started]) {
+            include_started = 1;
+          }
+          preprocessor_started = 0;
           continue;
         }
+        row->highlight_data[i] = (char)EHighlightToken_Preprocessor;
+        continue;
+      } else if (strchr(string_symbols, row->data[i]) != NULL) {
+        string_started = row->data[i];
+        row->highlight_string_open = string_started;
+        row->highlight_data[i] = (char)EHighlightToken_String;
+      } else if (is_digit(row->data[i])) {
+        row->highlight_data[i] = (char)EHighlightToken_Digit;
+      } else if (row->data[i] == '#') {
+        preprocessor_started = i + 1;
+        row->highlight_data[i] = (char)EHighlightToken_Preprocessor;
+      } else if (row->data[i] == '/') {
+        if (i > 1) {
+          if (row->data[i - 1] == '/') {
+            single_line_comment_started = 1;
+            row->highlight_data[i] = (char)EHighlightToken_Comment;
+            row->highlight_data[i - 1] = (char)EHighlightToken_Comment;
+          } else if (row->data[i - 1] == '*') {
+            row->highlight_data[i] = (char)EHighlightToken_Comment;
+            row->highlight_data[i - 1] = (char)EHighlightToken_Comment;
+            row->highlight_comment_open = 0;
+          }
+        } else {
+          row->highlight_data[i] = (char)EHighlightToken_Symbol;
+        }
+      } else if (row->data[i] == '*') {
+        if (i > 1 && row->data[i - 1] == '/') {
+          row->highlight_data[i] = (char)EHighlightToken_Comment;
+          row->highlight_data[i - 1] = (char)EHighlightToken_Comment;
+          row->highlight_comment_open = i - 1;  // Start of comment
+          single_line_comment_started = 1;
+        } else {
+          row->highlight_data[i] = (char)EHighlightToken_Symbol;
+        }
+      } else if (row->data[i] == '\\') {
+        row->highlight_data[i] = (char)EHighlightToken_Digit;
+      } else if (strchr(whitespace_symbols, row->data[i]) != NULL) {
+        row->highlight_data[i] = (char)EHighlightToken_Normal;  // Default highlight
+      } else if (strchr(symbols, row->data[i]) != NULL) {
+        row->highlight_data[i] = (char)EHighlightToken_Symbol;
+        // row->highlight_data[i] = (char)EHighlightToken_Normal;  // Default
+        // highlight
+      } else {
+        row->highlight_data[i] = (char)EHighlightToken_Normal;  // Default highlight
       }
-
-      string_started = row->data[i];
-      row->highlight_data[i] = (char)EHighlightToken_String;
-    } else if (is_digit(row->data[i])) {
-      row->highlight_data[i] = (char)EHighlightToken_Digit;
-    } else if (strchr(symbols, row->data[i]) != NULL) {
-      row->highlight_data[i] = (char)EHighlightToken_Symbol;
-      // row->highlight_data[i] = (char)EHighlightToken_Normal;  // Default highlight
-    } else if (row->data[i] == '#') {
-      preprocessor_started = i + 1;
-      row->highlight_data[i] = (char)EHighlightToken_Preprocessor;
-    } else {
-      row->highlight_data[i] = (char)EHighlightToken_Normal;  // Default highlight
     }
+    row = row->next;
   }
 }
 

@@ -58,6 +58,8 @@ static void buffer_insert_below_current(Buffer* buffer) {
   new_row->allocated_size = 16;  // Initial size for the data buffer
   new_row->data = (char*)malloc(new_row->allocated_size);
   new_row->highlight_data = (char*)malloc(new_row->allocated_size);
+  new_row->highlight_comment_open = 0;
+  new_row->highlight_string_open = 0;
   memset(new_row->highlight_data, 0, new_row->allocated_size);
   new_row->dirty = 1;
   if (new_row->data == NULL || new_row->highlight_data == NULL) {
@@ -128,6 +130,8 @@ bool buffer_append_line(Buffer* buffer, const char* line) {
   new_row->allocated_size = new_row->len + 1;
   new_row->data = (char*)malloc(new_row->allocated_size);
   new_row->highlight_data = (char*)malloc(new_row->allocated_size);
+  new_row->highlight_comment_open = 0;
+  new_row->highlight_string_open = 0;
   if (new_row->data == NULL || new_row->highlight_data == NULL) {
     if (new_row->data) {
       free(new_row->data);

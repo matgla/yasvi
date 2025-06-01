@@ -103,8 +103,7 @@ static void editor_mark_dirty_from_cursor(Editor* editor) {
   if (row == NULL) {
     return;  // No rows in the buffer
   }
-  for (int y = editor->cursor.y - editor->start_line; y < editor->window.height;
-       ++y) {
+  for (int y = 0; y < editor->window.height; ++y) {
     if (row != NULL) {
       buffer_row_mark_dirty(row);
       row = row->next;
@@ -124,13 +123,6 @@ static void editor_home_cursor_xy(Editor* editor) {
   editor_home_cursor_x(editor);
   editor_home_cursor_y(editor);
 }
-
-// static void editor_set_bar_message(Editor* editor, const char* message) {
-//   if (editor->status_bar) {
-//     free(editor->status_bar);
-//   }
-//   editor->status_bar = strdup(message);
-// }
 
 // true if editor loop should continue
 static bool editor_collect_command(Editor* editor, int key) {
@@ -571,10 +563,10 @@ static void editor_draw_buffers(Editor* editor) {
       editor->cursor.x = editor->number_of_line_digits;
     }
 
-    while (row != NULL && line_number < window_height) {
+    while (line_number < window_height) {
       int row_number = line_number + editor->start_line;
 
-      if (row->dirty) {
+      if (row != NULL && row->dirty) {
         static char line_buffer[1024];
         memcpy(line_buffer, highlight_styles[EHighlightToken_Normal], 10);
         itoa(row_number, line_buffer + 10, 10);
@@ -593,9 +585,15 @@ static void editor_draw_buffers(Editor* editor) {
         mvaddstr(line_number, 0, line_buffer);
         clrtoeol();
         row->dirty = false;
+        row = row->next;
+      } else if (row != NULL) {
+        row = row->next;
+      } else if (row == NULL) {
+        move(line_number, 0);
+        clrtoeol();
       }
+
       line_number++;
-      row = row->next;
     }
   }
 }
@@ -623,9 +621,9 @@ static void editor_process_dkey_sequence(Editor* editor, int key) {
         editor_move_cursor_y(editor, -1);
       }
     }
+    editor_mark_dirty_from_cursor(editor);
   }
 
-  editor_mark_dirty_from_cursor(editor);
   editor_fix_cursor_position(editor);
   editor->key_sequence[0] = 0;
 }

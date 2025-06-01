@@ -30,6 +30,8 @@ typedef struct BufferRow {
   struct BufferRow* next;
   struct BufferRow* prev;
   bool dirty;
+  int highlight_comment_open;
+  int highlight_string_open;
 } BufferRow;
 
 bool buffer_row_has_whitespace_at_position(const BufferRow* row, int position);

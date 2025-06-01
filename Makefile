@@ -9,7 +9,7 @@ CFLAGS += -I../../rootfs/usr/include
 LDFLAGS += -L../../rootfs/lib -lncurses
 else
 CFLAGS += -I../../libs/yasos_curses/include
-LDFLAGS += -L../../libs/yasos_curses/build -Wl,-rpath=../../libs/yasos_curses/build -lncurses
+LDFLAGS += -L../../libs/yasos_curses/build -Wl,-rpath=$(PWD)/../../libs/yasos_curses/build -lncurses
 endif
 
 TARGET = build/vi
@@ -26,7 +26,7 @@ build/%.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(TARGET): $(OBJS)
-	$(CC) $(LDFLAGS) $^ -o $@
+	$(CC) $^ $(LDFLAGS) -o $@
 
 install: $(TARGET) 
 	mkdir -p $(BINDIR)
