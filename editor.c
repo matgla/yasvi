@@ -496,24 +496,32 @@ static int count_digits(int number) {
 }
 
 static const char* highlight_styles[] = {
-  "\e[0;39;49m", "\e[1;34;40m", "\e[0;32;40m", "\e[0;36;40m",
+  "\e[0;39;49m", "\e[1;34;40m", "\e[0;32;40m", "\e[2;37;40m",
   "\e[1;35;40m", "\e[1;31;40m", "\e[0;35;40m", "\e[0;33;40m",
+};
+static const char* highlight_additional_style[] = {
+  NULL, NULL, NULL, "\e[3m", NULL, NULL, NULL, NULL,
 };
 
 static int editor_write_highlight_style(Editor* editor,
                                         EHighlightToken token,
                                         char* buffer,
                                         int n) {
-  if (n <= 11) {
+  if (n <= 15) {
     return 0;
   }
 
   if (token < 0 || token >= EHighlightToken_Count) {
-    token = EHighlightToken_Normal;  // Default to normal if out of range
+    token = EHighlightToken_Normal;
   }
   const char* style = highlight_styles[token];
   memcpy(buffer, style, 10);
-  buffer[10] = '\0';  // Null-terminate the string
+  if (highlight_additional_style[token] != NULL) {
+    memcpy(buffer + 10, highlight_additional_style[token], 4);
+    buffer[15] = '\0';
+    return 14;
+  }
+  buffer[10] = '\0';
   return 10;
 }
 

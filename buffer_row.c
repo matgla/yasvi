@@ -49,21 +49,24 @@ void buffer_row_highlight_line(BufferRow* row) {
       break;
     }
 
-    int single_line_comment_started = 0;
+    int comment_started = 0;
     row->dirty = true;
     process_next_row = false;
     if (row->prev) {
-      if (row->prev->highlight_string_open) {
-        string_started =
-          row->prev->highlight_string_open;  // Continue from previous row
+      if (row->prev->highlight_string_open && !row->highlight_comment_open) {
+        string_started = row->prev->highlight_string_open;
+      }
+      if (row->prev->highlight_comment_open) {
+        row->highlight_comment_open = row->prev->highlight_comment_open;
+        comment_started = 1;
       }
     }
 
     for (int i = 0; i < row->len; ++i) {
-      if (single_line_comment_started ||
-          (row->prev != NULL && row->prev->highlight_comment_open)) {
+      if (comment_started) {
         if (row->data[i] == '/' && i > 1 && row->data[i - 1] == '*') {
-          row->prev->highlight_comment_open = 0;  // End of comment
+          row->highlight_comment_open = 0;
+          comment_started = 0;
         }
         row->highlight_data[i] = (char)EHighlightToken_Comment;
       } else if (string_started) {
@@ -119,25 +122,26 @@ void buffer_row_highlight_line(BufferRow* row) {
         preprocessor_started = i + 1;
         row->highlight_data[i] = (char)EHighlightToken_Preprocessor;
       } else if (row->data[i] == '/') {
-        if (i > 1) {
+        if (i > 0) {
           if (row->data[i - 1] == '/') {
-            single_line_comment_started = 1;
+            comment_started = 1;
             row->highlight_data[i] = (char)EHighlightToken_Comment;
             row->highlight_data[i - 1] = (char)EHighlightToken_Comment;
           } else if (row->data[i - 1] == '*') {
             row->highlight_data[i] = (char)EHighlightToken_Comment;
             row->highlight_data[i - 1] = (char)EHighlightToken_Comment;
             row->highlight_comment_open = 0;
+            comment_started = 0;
           }
         } else {
           row->highlight_data[i] = (char)EHighlightToken_Symbol;
         }
       } else if (row->data[i] == '*') {
-        if (i > 1 && row->data[i - 1] == '/') {
+        if (i > 0 && row->data[i - 1] == '/') {
           row->highlight_data[i] = (char)EHighlightToken_Comment;
           row->highlight_data[i - 1] = (char)EHighlightToken_Comment;
-          row->highlight_comment_open = i - 1;  // Start of comment
-          single_line_comment_started = 1;
+          row->highlight_comment_open = 1;
+          comment_started = 1;
         } else {
           row->highlight_data[i] = (char)EHighlightToken_Symbol;
         }
