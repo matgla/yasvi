@@ -266,28 +266,39 @@ void buffer_row_replace_line(BufferRow* row, const char* new_line) {
   buffer_row_highlight_line(row);
 }
 
-bool buffer_row_remove_char(BufferRow* row, int index) {
+int buffer_row_remove_chars(BufferRow* row, int index, int number) {
   if (row == NULL || index < 0 || index >= row->len) {
-    return false;  // Invalid row or index
+    return 0;
+  }
+  if (number + index > row->len) {
+    number = row->len - index;
   }
 
-  memmove(&row->data[index], &row->data[index + 1], row->len - index - 1);
-  row->len--;
-  row->data[row->len] = '\0';  // Null-terminate the string
+  memmove(&row->data[index], &row->data[index + number],
+          row->len - index - 1 - number);
+  row->len -= number;
+  row->data[row->len] = '\0';
   row->dirty = true;
   buffer_row_highlight_line(row);
-  return true;
+  return number;
 }
 
-void buffer_row_insert_char(BufferRow* row, int index, char c) {
+bool buffer_row_remove_char(BufferRow* row, int index) {
+  return buffer_row_remove_chars(row, index, 1);
+}
+
+void buffer_row_insert_chars(BufferRow* row,
+                             int index,
+                             const char* str,
+                             int number) {
   if (row == NULL || index < 0) {
     return;  // Invalid row or index
   }
 
   // reallocation is optimized to reduce realloc overhead
-  if (row->len + 1 >= row->allocated_size) {
+  if (row->len + number >= row->allocated_size) {
     // Reallocate memory if needed
-    row->allocated_size = row->len + 16;
+    row->allocated_size = (row->len + number) << 1;
     row->data = realloc(row->data, row->allocated_size);
     row->highlight_data = realloc(row->highlight_data, row->allocated_size);
   }
@@ -296,11 +307,15 @@ void buffer_row_insert_char(BufferRow* row, int index, char c) {
     return;  // Memory allocation failed
   }
 
-  memmove(&row->data[index + 1], &row->data[index], row->len - index + 1);
-  row->data[index] = c;
-  row->len++;
+  memmove(&row->data[index + number], &row->data[index], row->len - index + 1);
+  memcpy(&row->data[index], str, number);
+  row->len += number;
   row->dirty = true;
   buffer_row_highlight_line(row);
+}
+
+void buffer_row_insert_char(BufferRow* row, int index, char c) {
+  buffer_row_insert_chars(row, index, &c, 1);
 }
 
 void buffer_row_append_char(BufferRow* row, char c) {
@@ -308,6 +323,13 @@ void buffer_row_append_char(BufferRow* row, char c) {
     return;  // Invalid row
   }
   buffer_row_insert_char(row, row->len, c);
+}
+
+void buffer_row_append_str(BufferRow* row, const char* str, int number) {
+  if (row == NULL) {
+    return;  // Invalid row
+  }
+  buffer_row_insert_chars(row, row->len, str, number);
 }
 
 void buffer_row_trim(BufferRow* row, int start_index) {

@@ -619,17 +619,28 @@ static void editor_process_gkey_sequence(Editor* editor, int key) {
 static void editor_process_dkey_sequence(Editor* editor, int key) {
   BufferRow* current_row = buffer_get_current_line(editor->current_buffer);
   const int number_of_lines = buffer_get_number_of_lines(editor->current_buffer);
-  if (key == 'd') {
-    if (number_of_lines <= 1) {
-      buffer_row_replace_line(current_row, "\n");
-    } else {
-      int offset = buffer_remove_current_row(editor->current_buffer);
+  switch (key) {
+    case 'd': {
+      if (number_of_lines <= 1) {
+        buffer_row_replace_line(current_row, "\n");
+      } else {
+        int offset = buffer_remove_current_row(editor->current_buffer);
 
-      if (offset < 0) {
-        editor_move_cursor_y(editor, -1);
+        if (offset < 0) {
+          editor_move_cursor_y(editor, -1);
+        }
       }
-    }
-    editor_mark_dirty_from_cursor(editor);
+      editor_mark_dirty_from_cursor(editor);
+    } break;
+    case 'w': {
+      // Delete word
+      int offset_to_word =
+        buffer_row_get_offset_to_next_word(current_row, editor_get_cursor_x(editor));
+      if (offset_to_word > 0) {
+        buffer_row_remove_chars(current_row, editor_get_cursor_x(editor),
+                                offset_to_word);
+      }
+    } break;
   }
 
   editor_fix_cursor_position(editor);
@@ -715,6 +726,14 @@ void editor_insert_char(Editor* editor, int key) {
       if (editor->cursor.x > editor->number_of_line_digits) {
         editor_move_cursor_x(editor, -1, true);
         buffer_row_remove_char(current_row, editor_get_cursor_x(editor));
+      } else if (editor->cursor.x == editor->number_of_line_digits) {
+        int chars = buffer_join_current_line_with_previous(editor->current_buffer);
+        if (chars > 0) {
+          editor_move_cursor_y(editor, -1);
+          editor_move_cursor_x(editor, editor->current_buffer->current_row->len,
+                               false);
+          editor_move_cursor_x(editor, -chars + 1, true);
+        }
       }
       return;
     }

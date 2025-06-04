@@ -43,9 +43,12 @@ int buffer_row_get_offset_to_prev_word(const BufferRow* row, int start_index);
 
 void buffer_row_replace_line(BufferRow* row, const char* new_line);
 bool buffer_row_remove_char(BufferRow* row, int index);
+int buffer_row_remove_chars(BufferRow* row, int index, int number);
 void buffer_row_insert_char(BufferRow* row, int index, char c);
+void buffer_row_insert_chars(BufferRow* row, int index, const char* str, int number);
 void buffer_row_trim(BufferRow* row, int start_index);
 void buffer_row_append_char(BufferRow* row, char c);
+void buffer_row_append_str(BufferRow* row, const char* str, int number);
 void buffer_row_break_line(BufferRow* row, int index);
 
 BufferRow* buffer_row_get_next(const BufferRow* row);

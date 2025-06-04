@@ -58,5 +58,6 @@ bool buffer_current_is_first_row(const Buffer* buffer);
 bool buffer_current_is_last_row(const Buffer* buffer);
 int buffer_get_number_of_lines(const Buffer* buffer);
 void buffer_break_current_line(Buffer* buffer, int index);
+int buffer_join_current_line_with_previous(Buffer* buffer);
 
 const char* buffer_get_filename(const Buffer* buffer);

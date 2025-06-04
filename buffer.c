@@ -328,6 +328,19 @@ void buffer_break_current_line(Buffer* buffer, int index) {
   }
 }
 
+int buffer_join_current_line_with_previous(Buffer* buffer) {
+  BufferRow* current = buffer_get_current_line(buffer);
+  int number_of_chars = 0;
+  if (current == buffer->head) {
+    return number_of_chars;
+  }
+  number_of_chars = current->len;
+  buffer_row_append_str(current->prev, current->data, current->len);
+  buffer_remove_current_row(buffer);
+  buffer->current_row = current->prev;
+  return number_of_chars;
+}
+
 const char* buffer_get_filename(const Buffer* buffer) {
   if (buffer == NULL) {
     return NULL;  // Invalid buffer
