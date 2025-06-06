@@ -496,11 +496,12 @@ static int count_digits(int number) {
 }
 
 static const char* highlight_styles[] = {
-  "\e[0;39;49m", "\e[1;34;40m", "\e[0;32;40m", "\e[2;37;40m",
-  "\e[1;35;40m", "\e[1;31;40m", "\e[0;35;40m", "\e[0;33;40m",
+  "\e[0;39;49m", "\e[0;31;40m", "\e[0;32;40m", "\e[0;90;40m", "\e[0;33;40m",
+  "\e[0;96;40m", "\e[0;35;40m", "\e[0;91;40m", "\e[0;34;40m", "\e[0;96;40m",
 };
+
 static const char* highlight_additional_style[] = {
-  NULL, NULL, NULL, "\e[3m", NULL, NULL, NULL, NULL,
+  NULL, "\e[1m", NULL, "\e[3m", "\e[1m", NULL, "\e[1m", "\e[1m", "\e[1m", "\e[1m",
 };
 
 static int editor_write_highlight_style(Editor* editor,

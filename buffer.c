@@ -338,7 +338,7 @@ int buffer_join_current_line_with_previous(Buffer* buffer) {
   buffer_row_append_str(current->prev, current->data, current->len);
   buffer_remove_current_row(buffer);
   buffer->current_row = current->prev;
-  return number_of_chars;
+  return number_of_chars + 1;
 }
 
 const char* buffer_get_filename(const Buffer* buffer) {

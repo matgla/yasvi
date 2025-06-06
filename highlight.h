@@ -26,5 +26,7 @@ typedef enum {
   EHighlightToken_Preprocessor,
   EHighlightToken_Digit,
   EHighlightToken_Symbol,
+  EHighlightToken_Keyword2,
+  EHighlightToken_Symbol2,
   EHighlightToken_Count,
 } EHighlightToken;

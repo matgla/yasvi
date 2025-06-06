@@ -29,10 +29,61 @@ bool is_digit(char c) {
   return c >= '0' && c <= '9';
 }
 
-static const char* symbols = "+-*/{}<>=";
+static const char* symbols = "+-|<>=:?!(),;{}/";
+static const char* symbols2 = "*&{}[]";
 static const char* whitespace_symbols = " \f\n\r\t\v";
 static const char* include_symbols = "\"<>";
 static const char* string_symbols = "\"'";
+static const char* keywords_1[] = {
+  "if",       "else",   "while", "for",     "return", "break",
+  "continue", "switch", "case",  "default", "do",     "goto",
+  "typedef",  "struct", "union", "static",  NULL};
+
+static const char* types[] = {"int",      "char",   "float",  "double",
+                              "void",     "bool",   "short",  "long",
+                              "unsigned", "signed", "size_t", NULL};
+
+static const char* keywords_2[] = {
+  "false", "true", "NULL", "FALSE", "TRUE",
+};
+
+static bool is_token(const char** array, const char* word, int n) {
+  for (const char** kw = array; *kw != NULL; ++kw) {
+    if (strlen(*kw) != n) {
+      continue;
+    }
+    if (strncmp(*kw, word, n) == 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+static bool highlight_token(BufferRow* row, int token_start, int i) {
+  if (is_token(keywords_1, &row->data[token_start], i - token_start)) {
+    for (int j = token_start; j < i; ++j) {
+      row->highlight_data[j] = (char)EHighlightToken_Keyword;
+    }
+    return true;
+  }
+
+  if (is_token(keywords_2, &row->data[token_start], i - token_start)) {
+    for (int j = token_start; j < i; ++j) {
+      row->highlight_data[j] = (char)EHighlightToken_Keyword2;
+    }
+    return true;
+  }
+
+  if (is_token(types, &row->data[token_start], i - token_start)) {
+    for (int j = token_start; j < i; ++j) {
+      row->highlight_data[j] = (char)EHighlightToken_Type;
+    }
+    return true;
+  }
+
+  return false;
+}
+
 void buffer_row_highlight_line(BufferRow* row) {
   if (row == NULL) {
     return;  // Invalid row
@@ -61,6 +112,7 @@ void buffer_row_highlight_line(BufferRow* row) {
         comment_started = 1;
       }
     }
+    int token_start = -1;
 
     for (int i = 0; i < row->len; ++i) {
       if (comment_started) {
@@ -87,6 +139,7 @@ void buffer_row_highlight_line(BufferRow* row) {
             row->highlight_string_open = string_started;
             process_next_row = true;
           }
+
         } else if (row->data[i] == string_started) {
           string_started = 0;
           row->highlight_string_open = 0;
@@ -99,7 +152,6 @@ void buffer_row_highlight_line(BufferRow* row) {
           include_started = 0;  // Reset after processing include
         }
         row->highlight_data[i] = (char)EHighlightToken_String;
-        continue;
       } else if (preprocessor_started) {
         if (strchr(whitespace_symbols, row->data[i]) != NULL) {
           row->highlight_data[i] = (char)EHighlightToken_Normal;
@@ -108,16 +160,13 @@ void buffer_row_highlight_line(BufferRow* row) {
             include_started = 1;
           }
           preprocessor_started = 0;
-          continue;
+        } else {
+          row->highlight_data[i] = (char)EHighlightToken_Preprocessor;
         }
-        row->highlight_data[i] = (char)EHighlightToken_Preprocessor;
-        continue;
       } else if (strchr(string_symbols, row->data[i]) != NULL) {
         string_started = row->data[i];
         row->highlight_string_open = string_started;
         row->highlight_data[i] = (char)EHighlightToken_String;
-      } else if (is_digit(row->data[i])) {
-        row->highlight_data[i] = (char)EHighlightToken_Digit;
       } else if (row->data[i] == '#') {
         preprocessor_started = i + 1;
         row->highlight_data[i] = (char)EHighlightToken_Preprocessor;
@@ -143,20 +192,47 @@ void buffer_row_highlight_line(BufferRow* row) {
           row->highlight_comment_open = 1;
           comment_started = 1;
         } else {
-          row->highlight_data[i] = (char)EHighlightToken_Symbol;
+          if (token_start != -1) {
+            highlight_token(row, token_start, i);
+            token_start = -1;
+          }
+          row->highlight_data[i] = (char)EHighlightToken_Symbol2;
         }
       } else if (row->data[i] == '\\') {
         row->highlight_data[i] = (char)EHighlightToken_Digit;
-      } else if (strchr(whitespace_symbols, row->data[i]) != NULL) {
-        row->highlight_data[i] = (char)EHighlightToken_Normal;  // Default highlight
-      } else if (strchr(symbols, row->data[i]) != NULL) {
-        row->highlight_data[i] = (char)EHighlightToken_Symbol;
-        // row->highlight_data[i] = (char)EHighlightToken_Normal;  // Default
-        // highlight
       } else {
-        row->highlight_data[i] = (char)EHighlightToken_Normal;  // Default highlight
+        row->highlight_data[i] = (char)EHighlightToken_Normal;
+        if ((row->data[i] >= 'A' && row->data[i] <= 'Z') ||
+            (row->data[i] >= 'a' && row->data[i] <= 'z') || (row->data[i] == '_') ||
+            (row->data[i] >= '0' && row->data[i] <= '9')) {
+          // if token is not started
+          if (token_start == -1) {
+            // and if the character is a digit, we don't start a token
+            if (row->data[i] >= '0' && row->data[i] <= '9') {
+              row->highlight_data[i] = (char)EHighlightToken_Digit;
+            } else {
+              token_start = i;
+            }
+          }
+          row->highlight_data[i] = (char)EHighlightToken_Normal;
+        } else if (token_start != -1) {
+          highlight_token(row, token_start, i);
+          token_start = -1;
+        }
+
+        if (token_start == -1) {
+          if (strchr(symbols, row->data[i]) != NULL) {
+            row->highlight_data[i] = (char)EHighlightToken_Symbol;
+          } else if (strchr(symbols2, row->data[i]) != NULL) {
+            row->highlight_data[i] = (char)EHighlightToken_Symbol2;
+          }
+        }
       }
     }
+    if (token_start != -1) {
+      highlight_token(row, token_start, row->len);
+    }
+
     row = row->next;
   }
 }
@@ -274,8 +350,7 @@ int buffer_row_remove_chars(BufferRow* row, int index, int number) {
     number = row->len - index;
   }
 
-  memmove(&row->data[index], &row->data[index + number],
-          row->len - index - 1 - number);
+  memmove(&row->data[index], &row->data[index + number], row->len - index - number);
   row->len -= number;
   row->data[row->len] = '\0';
   row->dirty = true;
