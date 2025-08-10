@@ -203,17 +203,23 @@ void buffer_load_from_file(Buffer* buffer, const char* filename) {
 
   char* line = NULL;
   size_t len = 0;
+  int lines = 0;
 
   while (getline(&line, &len, file) != EOF) {
     if (line != NULL) {
       buffer_append_line(buffer, line);
       free(line);
       line = NULL;
+      lines++;
     }
   }
   if (line) {
     free(line);
     line = NULL;
+  }
+
+  if (lines == 0) {
+    buffer_append_line(buffer, "\n");  // Ensure at least one empty line
   }
 
   fclose(file);
