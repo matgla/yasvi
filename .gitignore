@@ -1,3 +1,6 @@
 build/
 tests/build/
 .gdb_history
+__pycache__/
+*.pyc
+tests/integration/screenshots

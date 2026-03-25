@@ -99,7 +99,7 @@ void test_buffer_row_get_offset_to_prev_word(void) {
   TEST_CHECK(offset == -10);
 
   offset = buffer_row_get_offset_to_prev_word(row, 2);
-  TEST_CHECK(offset == 0);
+  TEST_CHECK(offset == -2);  // go back to start of line (through leading spaces)
 
   buffer_free(buffer);
 }

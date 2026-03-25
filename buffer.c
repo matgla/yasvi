@@ -22,6 +22,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "filetypes/filetype.h"
+
 static bool buffer_append_list_row(Buffer* buffer, BufferRow* new_row) {
   if (buffer == NULL || new_row == NULL) {
     return false;
@@ -60,6 +62,7 @@ static void buffer_insert_below_current(Buffer* buffer) {
   new_row->highlight_data = (char*)malloc(new_row->allocated_size);
   new_row->highlight_comment_open = 0;
   new_row->highlight_string_open = 0;
+  new_row->filetype = buffer->filetype;
   memset(new_row->highlight_data, 0, new_row->allocated_size);
   new_row->dirty = 1;
   if (new_row->data == NULL || new_row->highlight_data == NULL) {
@@ -94,6 +97,7 @@ Buffer* buffer_alloc() {
     buffer->current_row = NULL;
     buffer->number_of_rows = 0;
     buffer->filename = NULL;
+    buffer->filetype = NULL;
   }
   return buffer;
 }
@@ -132,6 +136,7 @@ bool buffer_append_line(Buffer* buffer, const char* line) {
   new_row->highlight_data = (char*)malloc(new_row->allocated_size);
   new_row->highlight_comment_open = 0;
   new_row->highlight_string_open = 0;
+  new_row->filetype = buffer->filetype;
   if (new_row->data == NULL || new_row->highlight_data == NULL) {
     if (new_row->data) {
       free(new_row->data);
@@ -157,8 +162,10 @@ bool buffer_append_line(Buffer* buffer, const char* line) {
     new_row->data[i] = '\0';  // Null-terminate the string
     new_row->len--;           // Reduce length for trailing newlines
   }
-  new_row->dirty = true;               // Mark the row as dirty
-  buffer_row_highlight_line(new_row);  // Highlight the new row
+  new_row->dirty = true;  // Mark the row as dirty
+
+  // Highlight using row's filetype
+  buffer_row_highlight_line(new_row);
 
   return true;
 }
@@ -197,6 +204,8 @@ void buffer_load_from_file(Buffer* buffer, const char* filename) {
   FILE* file = fopen(filename, "r");
   buffer->filename = strdup(filename);
   if (file == NULL) {
+    // For new files, detect filetype by extension only
+    buffer->filetype = filetype_by_extension(filename);
     buffer_append_line(buffer, "\n");
     return;
   }
@@ -204,9 +213,14 @@ void buffer_load_from_file(Buffer* buffer, const char* filename) {
   char* line = NULL;
   size_t len = 0;
   int lines = 0;
+  char* first_line = NULL;
 
   while (getline(&line, &len, file) != EOF) {
     if (line != NULL) {
+      // Store first line for shebang detection
+      if (lines == 0) {
+        first_line = strdup(line);
+      }
       buffer_append_line(buffer, line);
       free(line);
       line = NULL;
@@ -220,6 +234,24 @@ void buffer_load_from_file(Buffer* buffer, const char* filename) {
 
   if (lines == 0) {
     buffer_append_line(buffer, "\n");  // Ensure at least one empty line
+  }
+
+  // Detect filetype after loading
+  buffer->filetype = filetype_detect(filename, first_line);
+
+  // Set filetype on all existing rows and re-highlight
+  // Reset multiline state on first row to ensure clean highlighting
+  if (buffer->head) {
+    buffer->head->highlight_comment_open = 0;
+    buffer->head->highlight_string_open = 0;
+  }
+  for (BufferRow* row = buffer->head; row; row = row->next) {
+    row->filetype = buffer->filetype;
+    buffer_row_highlight_line(row);
+  }
+
+  if (first_line) {
+    free(first_line);
   }
 
   fclose(file);
@@ -243,6 +275,7 @@ void buffer_remove_row(Buffer* buffer, BufferRow* row) {
   }
 
   free(row->data);
+  free(row->highlight_data);
   free(row);
   buffer->number_of_rows--;
 }
@@ -342,8 +375,9 @@ int buffer_join_current_line_with_previous(Buffer* buffer) {
   }
   number_of_chars = current->len;
   buffer_row_append_str(current->prev, current->data, current->len);
+  // buffer_remove_current_row already updates buffer->current_row
+  // so we don't need to do it again here
   buffer_remove_current_row(buffer);
-  buffer->current_row = current->prev;
   return number_of_chars + 1;
 }
 
@@ -352,4 +386,25 @@ const char* buffer_get_filename(const Buffer* buffer) {
     return NULL;  // Invalid buffer
   }
   return buffer->filename;
+}
+
+int buffer_get_current_line_number(const Buffer* buffer) {
+  if (buffer == NULL || buffer->current_row == NULL) {
+    return 0;
+  }
+
+  int line_number = 1;
+  BufferRow* row = buffer->head;
+  while (row != NULL && row != buffer->current_row) {
+    line_number++;
+    row = row->next;
+  }
+  return line_number;
+}
+
+bool buffer_is_modified(const Buffer* buffer) {
+  // TODO: Implement proper modification tracking
+  // For now, always return false
+  (void)buffer;
+  return false;
 }

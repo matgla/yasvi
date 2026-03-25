@@ -1,0 +1,13 @@
+# Python dependencies for E2E integration tests
+
+# Core testing framework
+pytest>=7.4.0
+pytest-xdist>=3.6.1
+pytest-html>=4.1.0
+pytest-timeout>=2.2.0
+
+# Terminal interaction
+pexpect>=4.9.0
+
+# Optional: for better diffs in assertions
+pytest-icdiff>=0.9

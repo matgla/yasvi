@@ -25,11 +25,14 @@
 
 #include "command.h"
 #include "highlight.h"
+#include "toolbar.h"
+#include "toolbar_widgets.h"
 
 #define EDITOR_TOP_BAR_HEIGHT 1
+// 1 is for separator line
 // 1 is for command line
-// 2 is for status bar
-#define EDITOR_BOTTOM_BAR_HEIGHT 2
+// 1 is for status bar
+#define EDITOR_BOTTOM_BAR_HEIGHT 3
 
 typedef enum {
   CommandResult_Success = 0,
@@ -69,7 +72,7 @@ char* itoa(int n, char* s, int base) {
 }
 #endif
 
-static int editor_get_cursor_x(const Editor* editor) {
+int editor_get_cursor_x(const Editor* editor) {
   if (editor->cursor.x + editor->start_column < editor->number_of_line_digits) {
     return 0;
   }
@@ -423,6 +426,14 @@ static void editor_process_editor_key(Editor* editor, int key) {
       editor_move_cursor_x(editor, offset_to_word, false);
       return;
     }
+    case 'e': {
+      const BufferRow* current_row = buffer_get_current_line(editor->current_buffer);
+      int offset_to_end =
+        buffer_row_get_offset_to_end_of_word(current_row, editor_get_cursor_x(editor));
+
+      editor_move_cursor_x(editor, offset_to_end, false);
+      return;
+    }
     case 'b': {
       const BufferRow* current_row = buffer_get_current_line(editor->current_buffer);
       int offset_to_word =
@@ -470,9 +481,13 @@ static void editor_process_editor_key(Editor* editor, int key) {
 }
 
 static bool editor_append_buffer(Editor* editor, Buffer* buffer) {
-  editor->buffers = NULL;
-  editor->buffers = (Buffer**)realloc(
+  Buffer** new_buffers = (Buffer**)realloc(
     editor->buffers, sizeof(Buffer*) * (editor->number_of_buffers + 1));
+  if (new_buffers == NULL) {
+    editor_set_error_message(editor, "Failed to allocate memory for buffers");
+    return false;
+  }
+  editor->buffers = new_buffers;
   if (editor->buffers == NULL) {
     editor_set_error_message(editor, "Failed to allocate memory for buffers");
     return false;
@@ -495,61 +510,66 @@ static int count_digits(int number) {
   return count;
 }
 
-static const char* highlight_styles[] = {
-  "\e[0;39;49m", "\e[0;31;40m", "\e[0;32;40m", "\e[0;90;40m", "\e[0;33;40m",
-  "\e[0;96;40m", "\e[0;35;40m", "\e[0;91;40m", "\e[0;34;40m", "\e[0;96;40m",
-};
-
-static const char* highlight_additional_style[] = {
-  NULL, "\e[1m", NULL, "\e[3m", "\e[1m", NULL, "\e[1m", "\e[1m", "\e[1m", "\e[1m",
-};
-
-static int editor_write_highlight_style(Editor* editor,
-                                        EHighlightToken token,
-                                        char* buffer,
-                                        int n) {
-  if (n <= 15) {
-    return 0;
-  }
-
+static attr_t editor_get_highlight_style(EHighlightToken token) {
   if (token < 0 || token >= EHighlightToken_Count) {
     token = EHighlightToken_Normal;
   }
-  const char* style = highlight_styles[token];
-  memcpy(buffer, style, 10);
-  if (highlight_additional_style[token] != NULL) {
-    memcpy(buffer + 10, highlight_additional_style[token], 4);
-    buffer[15] = '\0';
-    return 14;
+
+  switch (token) {
+    case EHighlightToken_Keyword:
+      return COLOR_KEYWORD | A_BOLD;
+    case EHighlightToken_String:
+      return COLOR_STRING;
+    case EHighlightToken_Comment:
+      return COLOR_COMMENT;
+    case EHighlightToken_Type:
+      return COLOR_TYPE | A_BOLD;
+    case EHighlightToken_Preprocessor:
+      return COLOR_PREPROCESSOR;
+    case EHighlightToken_Digit:
+      return COLOR_NUMBER | A_BOLD;
+    case EHighlightToken_Symbol:
+      return COLOR_STRING | A_BOLD;
+    case EHighlightToken_Keyword2:
+      return COLOR_TYPE | A_BOLD;
+    case EHighlightToken_Symbol2:
+      return COLOR_NUMBER | A_BOLD;
+    case EHighlightToken_Normal:
+    case EHighlightToken_Count:
+    default:
+      return COLOR_OTHER;
   }
-  buffer[10] = '\0';
-  return 10;
 }
 
 static void editor_decorate_and_draw_line(Editor* editor,
                                           int line_number,
                                           BufferRow* row,
-                                          char* buffer,
-                                          int n) {
+                                          int line_number_width) {
   const char* line = &row->data[editor->start_column];
-  const char* hl = &row->highlight_data[editor->start_column];
-  int index = 0;
-  EHighlightToken token = EHighlightToken_Normal;
-  for (int i = 0; i < row->len - editor->start_column && index < n; ++i) {
-    if (line[i] == '\0') {
-      break;  // End of line
-    }
-    if (token != hl[i]) {
-      token = hl[i];
-      index +=
-        editor_write_highlight_style(editor, token, &buffer[index], n - index);
-    }
-    if (index >= n - 1) {
-      break;  // No more space in the buffer
-    }
-    buffer[index++] = line[i];
+  const unsigned char* hl =
+    (const unsigned char*)&row->highlight_data[editor->start_column];
+  const int max_columns = editor->window.width - line_number_width;
+
+  if (max_columns <= 0) {
+    return;
   }
-  buffer[index] = '\0';
+
+  move(line_number, line_number_width);
+  attrset(COLOR_OTHER);
+
+  EHighlightToken token = EHighlightToken_Normal;
+  for (int i = 0; i < row->len - editor->start_column && i < max_columns; ++i) {
+    if (line[i] == '\0') {
+      break;
+    }
+    if (token != (EHighlightToken)hl[i]) {
+      token = (EHighlightToken)hl[i];
+      attrset(editor_get_highlight_style(token));
+    }
+    addch(line[i]);
+  }
+
+  attrset(COLOR_OTHER);
 }
 
 static void editor_draw_buffers(Editor* editor) {
@@ -565,9 +585,10 @@ static void editor_draw_buffers(Editor* editor) {
     const int window_height =
       editor->window.height - EDITOR_BOTTOM_BAR_HEIGHT - EDITOR_TOP_BAR_HEIGHT + 1;
     BufferRow* row = buffer_get_row(editor->current_buffer, editor->start_line);
-    int max_digits = count_digits(editor->start_line + window_height);
-
-    editor->number_of_line_digits = max_digits + 1;
+    // Fixed 4-digit line number width to prevent content shifting
+    // when line count goes from 99 to 100, 999 to 1000, etc.
+    (void)count_digits;  // Unused now, but kept for potential future use
+    editor->number_of_line_digits = 4;
     if (editor->cursor.x <= editor->number_of_line_digits) {
       editor->cursor.x = editor->number_of_line_digits;
     }
@@ -576,22 +597,21 @@ static void editor_draw_buffers(Editor* editor) {
       int row_number = line_number + editor->start_line;
 
       if (row != NULL && row->dirty) {
-        static char line_buffer[1024];
-        memcpy(line_buffer, highlight_styles[EHighlightToken_Normal], 10);
-        itoa(row_number, line_buffer + 10, 10);
+        static char line_buffer[32];
+        itoa(row_number, line_buffer, 10);
         int line_length = strlen(line_buffer);
-        int i = 0;
-        for (i = 0; i < editor->number_of_line_digits - line_length + 11; ++i) {
-          line_buffer[line_length] = ' ';
-          ++line_length;
+        for (int i = line_length; i < editor->number_of_line_digits; ++i) {
+          line_buffer[i] = ' ';
         }
-        line_buffer[line_length] = '\0';
+        line_buffer[editor->number_of_line_digits] = '\0';
+
+        attrset(COLOR_OTHER);
+        mvaddstr(line_number, 0, line_buffer);
         if (editor->start_column < buffer_row_get_length(row)) {
           editor_decorate_and_draw_line(editor, line_number, row,
-                                        &line_buffer[line_length],
-                                        sizeof(line_buffer) - line_length);
+                                        editor->number_of_line_digits);
         }
-        mvaddstr(line_number, 0, line_buffer);
+        attrset(COLOR_OTHER);
         clrtoeol();
         row->dirty = false;
         row = row->next;
@@ -640,6 +660,15 @@ static void editor_process_dkey_sequence(Editor* editor, int key) {
       if (offset_to_word > 0) {
         buffer_row_remove_chars(current_row, editor_get_cursor_x(editor),
                                 offset_to_word);
+      }
+    } break;
+    case 'e': {
+      // Delete to end of word
+      int offset_to_end =
+        buffer_row_get_offset_to_end_of_word(current_row, editor_get_cursor_x(editor));
+      if (offset_to_end > 0) {
+        buffer_row_remove_chars(current_row, editor_get_cursor_x(editor),
+                                offset_to_end + 1);  // +1 to include current char
       }
     } break;
   }
@@ -762,6 +791,14 @@ void editor_insert_char(Editor* editor, int key) {
 }
 
 void editor_process_key(Editor* editor, int key) {
+  // Update debug keystroke widget if available
+  if (editor->toolbar) {
+    Widget* debug_widget = toolbar_find_widget(editor->toolbar, "debug_keystroke");
+    if (debug_widget) {
+      widget_debug_keystroke_add_key(debug_widget, key);
+    }
+  }
+
   bool done = false;
   editor->key = key;
   while (!done) {
@@ -861,7 +898,16 @@ void editor_redraw_screen(Editor* editor) {
   // clear();
   curs_set(0);
   editor_draw_buffers(editor);
-  editor_draw_status_bar(editor);
+
+  // Use widget-based toolbar if available
+  if (editor->toolbar) {
+    toolbar_update(editor->toolbar, editor);
+    toolbar_draw(editor->toolbar, editor);
+  } else {
+    // Fallback to old status bar
+    editor_draw_status_bar(editor);
+  }
+
   switch (editor->state) {
     case EditorState_Running:
     case EditorState_EditMode:
@@ -876,6 +922,35 @@ void editor_redraw_screen(Editor* editor) {
 
 void editor_init(Editor* editor) {
   window_init(&editor->window);
+
+  // Create and initialize toolbar
+  editor->toolbar = malloc(sizeof(struct Toolbar));
+  if (editor->toolbar) {
+    toolbar_init(editor->toolbar, editor->window.height, editor->window.width);
+
+    // Add default widgets
+    toolbar_add_widget(editor->toolbar, widget_mode_create());
+    toolbar_add_widget(editor->toolbar, widget_filename_create());
+    toolbar_add_widget(editor->toolbar, widget_position_create());
+    toolbar_add_widget(editor->toolbar, widget_command_create());
+    toolbar_add_widget(editor->toolbar, widget_message_create());
+    toolbar_add_widget(editor->toolbar, widget_keyseq_create());
+
+#ifdef DEBUG
+    // Add debug keystroke widget in debug builds
+    DebugKeystrokeConfig debug_config = {
+        .show_ascii_char = true,
+        .show_decimal_code = true,
+        .show_hex_code = true,
+        .show_octal_code = false,
+        .compact_mode = true,
+    };
+    toolbar_add_widget(editor->toolbar, widget_debug_keystroke_create(&debug_config));
+#endif
+
+    toolbar_layout(editor->toolbar);
+  }
+
   editor_home_cursor_xy(editor);
   move(editor->cursor.y, editor->cursor.x);
 }
@@ -885,9 +960,22 @@ void editor_deinit(Editor* editor) {
     buffer_free(editor->buffers[i]);
   }
   free(editor->buffers);
+  editor->buffers = NULL;
+  editor->number_of_buffers = 0;
+  editor->current_buffer = NULL;
   if (editor->error_message) {
     free(editor->error_message);
     editor->error_message = NULL;
+  }
+  // Clean up command buffer if it was initialized
+  if (editor->command.buffer != NULL) {
+    command_deinit(&editor->command);
+  }
+  // Clean up toolbar
+  if (editor->toolbar) {
+    toolbar_deinit(editor->toolbar);
+    free(editor->toolbar);
+    editor->toolbar = NULL;
   }
   window_deinit(&editor->window);
 }

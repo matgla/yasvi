@@ -1,3 +1,49 @@
-[] backspace joins lines[] 'dw' removes word
+# Yasvi Testing Plan - Implementation Status
 
-  // and record :)
+## Phase 1: BufferRow Unit Tests ✅ COMPLETE
+All test files implemented (109 tests total):
+- [x] buffer_row_character_tests.c (23 tests)
+- [x] buffer_row_string_tests.c (22 tests)
+- [x] buffer_row_navigation_tests.c (23 tests)
+- [x] buffer_row_line_tests.c (6 tests)
+- [x] buffer_row_highlight_tests.c (35 tests)
+
+## Phase 2: Buffer Unit Tests 🚧 IN PROGRESS
+- [x] Basic tests exist in buffer_tests.c (5 tests)
+- [ ] Lifecycle & Accessors tests (buffer_alloc/free, get_first_row, get_row, get_current_line, get_number_of_lines)
+- [ ] Row Management tests (append_line, remove_row, remove_current_row for first/last/middle/only row)
+- [ ] Navigation tests (scroll_rows forward/backward past boundaries, scroll_to_top, current_is_first/last_row)
+- [ ] Line Operations tests (break_current_line at start/end/middle/empty buffer, join_current_line_with_previous)
+- [ ] File I/O tests (load_from_file existing/nonexistent/empty/large, get_filename)
+
+## Phase 3: Command Unit Tests ❌ NOT STARTED
+- [ ] command_init tests
+- [ ] command_append tests (single, multiple, reallocation)
+- [ ] command_deinit tests
+- [ ] command_error tests
+
+## Phase 4: Editor Unit Tests ❌ NOT STARTED
+- [ ] Refactor editor.c for testability (separate core logic from ncurses UI)
+- [ ] Create mock_ncurses framework
+- [ ] State machine tests (Normal→Insert→Command→Exit transitions)
+- [ ] Key sequence tests (h,j,k,l,w,b,dd,dw,number prefixes)
+- [ ] Command parsing tests (:w, :q, :wq, invalid, cancel)
+
+## Phase 5: Integration Tests ❌ NOT STARTED
+- [ ] File-based integration tests (create-edit-save, load-edit-save, multiple buffers)
+- [ ] Script-based test harness for end-to-end workflows
+
+## Phase 6: Test Infrastructure 🚧 PARTIAL
+- [x] Makefile with test compilation
+- [x] AddressSanitizer for gcc
+- [ ] Coverage reporting (gcov/lcov)
+- [ ] CI/CD pipeline (GitHub Actions)
+- [ ] Fuzzing infrastructure
+
+## Original Feature TODOs
+- [ ] backspace joins lines
+- [ ] 'dw' removes word
+
+## Notes
+- All 102 current tests pass with AddressSanitizer
+- See docs/TESTING_PLAN.md for detailed test specifications

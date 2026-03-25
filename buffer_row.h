@@ -21,6 +21,7 @@
 #include <stddef.h>
 
 #include "highlight.h"
+#include "filetypes/filetype.h"
 
 typedef struct BufferRow {
   char* data;
@@ -32,6 +33,7 @@ typedef struct BufferRow {
   bool dirty;
   int highlight_comment_open;
   int highlight_string_open;
+  const struct Filetype* filetype;  // Reference to buffer's filetype (may be NULL)
 } BufferRow;
 
 bool buffer_row_has_whitespace_at_position(const BufferRow* row, int position);
@@ -40,6 +42,7 @@ int buffer_row_get_length(const BufferRow* row);
 int buffer_row_get_offset_to_first_char(const BufferRow* row, int start_index);
 int buffer_row_get_offset_to_next_word(const BufferRow* row, int start_index);
 int buffer_row_get_offset_to_prev_word(const BufferRow* row, int start_index);
+int buffer_row_get_offset_to_end_of_word(const BufferRow* row, int start_index);
 
 void buffer_row_replace_line(BufferRow* row, const char* new_line);
 bool buffer_row_remove_char(BufferRow* row, int index);

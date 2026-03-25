@@ -29,7 +29,7 @@ int main(int argc, char* argv[]) {
     .command = {NULL, 0, 0},
     .error_message = NULL,
     .cursor = {2, 0},
-    .number_of_line_digits = 3,
+    .number_of_line_digits = 4,
     .current_buffer = NULL,
     .buffers = NULL,
     .number_of_buffers = 0,

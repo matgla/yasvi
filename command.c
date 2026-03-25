@@ -51,8 +51,8 @@ void command_error(Command* command, const char* message) {
     command->buffer_size = error_length + command->cursor_position + 1;
     command->buffer = realloc(command->buffer, command->buffer_size);
   }
-  memcpy(command->buffer + command->cursor_position, command->buffer,
-         command->cursor_position);
+  memmove(command->buffer + command->cursor_position, command->buffer,
+          command->cursor_position);
   memcpy(command->buffer, message, error_length);
   command->buffer[command->cursor_position + error_length] = '\0';
 }

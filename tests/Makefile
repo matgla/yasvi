@@ -2,36 +2,103 @@
 
 CC = gcc
 CFLAGS = -Wall -Wextra -Werror -std=c11 -I. -I..
-LDFLAGS =  -Lbuild -static -lsut
+LDFLAGS =
 
-SUT_SRCS = buffer.c
-SUT_OBJS = $(patsubst %.c,build/sut/%.o,$(SUT_SRCS))
+ifeq ($(CC), gcc)
+CFLAGS += -fsanitize=address
+LDFLAGS += -fsanitize=address
+endif
 
-all: $(SUT_OBJS) run
+# System Under Test sources (will be compiled with tests)
+SUT_SRCS = ../buffer.c ../buffer_row.c ../command.c \
+           ../filetypes/filetype.c ../filetypes/c.c ../filetypes/shell.c
 
-build/sut/%.o: ../%.c
-	mkdir -p build/sut
-	$(CC) $(CFLAGS) -c $< -o $@
+# Toolbar sources (needed for editor tests)
+TOOLBAR_SRCS = ../toolbar.c ../toolbar_widget.c ../toolbar_widgets.c
 
-build/libsut.a: $(SUT_OBJS)
-	ar rcs $@ $^
+# Mock sources for editor tests
+MOCK_SRCS = mock_ncurses.c
 
-build/%.o: %.c acutest.h
+# Test sources
+TEST_NAMES = buffer_tests command_tests \
+             buffer_row_character_tests \
+             buffer_row_string_tests \
+             buffer_row_navigation_tests \
+             buffer_row_line_tests \
+             buffer_row_highlight_tests \
+             buffer_lifecycle_tests \
+             buffer_row_management_tests \
+             buffer_navigation_tests \
+             buffer_line_ops_tests \
+             buffer_file_tests \
+             editor_state_tests \
+             editor_command_tests \
+             editor_key_tests
+
+TEST_BINS = $(patsubst %,build/%,$(TEST_NAMES))
+
+all: $(TEST_BINS) run
+
+build:
 	mkdir -p build
-	$(CC) $(CFLAGS) -c $< -o $@
 
-build/buffer_tests: build/buffer_tests.o build/libsut.a
-	$(CC) $(LDFLAGS) $^ -o $@
+# Pattern rule for test executables - compile SUT sources with each test
+build/buffer_tests: buffer_tests.c $(SUT_SRCS) acutest.h | build
+	$(CC) $(CFLAGS) -o $@ buffer_tests.c $(SUT_SRCS) $(LDFLAGS)
 
-build/command_tests: build/command_tests.o build/libsut.a
-	$(CC) $(LDFLAGS) $^ -o $@
+build/command_tests: command_tests.c $(SUT_SRCS) acutest.h | build
+	$(CC) $(CFLAGS) -o $@ command_tests.c $(SUT_SRCS) $(LDFLAGS)
 
-run: build/buffer_tests build/command_tests
-	./build/buffer_tests
-	./build/command_tests
+build/buffer_row_character_tests: buffer_row_character_tests.c $(SUT_SRCS) acutest.h | build
+	$(CC) $(CFLAGS) -o $@ buffer_row_character_tests.c $(SUT_SRCS) $(LDFLAGS)
+
+build/buffer_row_string_tests: buffer_row_string_tests.c $(SUT_SRCS) acutest.h | build
+	$(CC) $(CFLAGS) -o $@ buffer_row_string_tests.c $(SUT_SRCS) $(LDFLAGS)
+
+build/buffer_row_navigation_tests: buffer_row_navigation_tests.c $(SUT_SRCS) acutest.h | build
+	$(CC) $(CFLAGS) -o $@ buffer_row_navigation_tests.c $(SUT_SRCS) $(LDFLAGS)
+
+build/buffer_row_line_tests: buffer_row_line_tests.c $(SUT_SRCS) acutest.h | build
+	$(CC) $(CFLAGS) -o $@ buffer_row_line_tests.c $(SUT_SRCS) $(LDFLAGS)
+
+build/buffer_row_highlight_tests: buffer_row_highlight_tests.c $(SUT_SRCS) acutest.h | build
+	$(CC) $(CFLAGS) -o $@ buffer_row_highlight_tests.c $(SUT_SRCS) $(LDFLAGS)
+
+build/buffer_lifecycle_tests: buffer_lifecycle_tests.c $(SUT_SRCS) acutest.h | build
+	$(CC) $(CFLAGS) -o $@ buffer_lifecycle_tests.c $(SUT_SRCS) $(LDFLAGS)
+
+build/buffer_row_management_tests: buffer_row_management_tests.c $(SUT_SRCS) acutest.h | build
+	$(CC) $(CFLAGS) -o $@ buffer_row_management_tests.c $(SUT_SRCS) $(LDFLAGS)
+
+build/buffer_navigation_tests: buffer_navigation_tests.c $(SUT_SRCS) acutest.h | build
+	$(CC) $(CFLAGS) -o $@ buffer_navigation_tests.c $(SUT_SRCS) $(LDFLAGS)
+
+build/buffer_line_ops_tests: buffer_line_ops_tests.c $(SUT_SRCS) acutest.h | build
+	$(CC) $(CFLAGS) -o $@ buffer_line_ops_tests.c $(SUT_SRCS) $(LDFLAGS)
+
+build/buffer_file_tests: buffer_file_tests.c $(SUT_SRCS) acutest.h | build
+	$(CC) $(CFLAGS) -o $@ buffer_file_tests.c $(SUT_SRCS) $(LDFLAGS)
+
+# Editor tests use a special build that compiles editor.c with mock ncurses
+# We use -include to force mock_ncurses.h to be included first, and -D to prevent real ncurses
+EDITOR_TEST_CFLAGS = $(CFLAGS) -include mock_ncurses.h -D__NCURSES_H
+
+build/editor_state_tests: editor_state_tests.c $(SUT_SRCS) $(MOCK_SRCS) $(TOOLBAR_SRCS) ../editor.c ../window.c acutest.h mock_ncurses.h | build
+	$(CC) $(EDITOR_TEST_CFLAGS) -o $@ editor_state_tests.c $(SUT_SRCS) $(MOCK_SRCS) $(TOOLBAR_SRCS) ../editor.c ../window.c $(LDFLAGS)
+
+build/editor_command_tests: editor_command_tests.c $(SUT_SRCS) $(MOCK_SRCS) $(TOOLBAR_SRCS) ../editor.c ../window.c acutest.h mock_ncurses.h | build
+	$(CC) $(EDITOR_TEST_CFLAGS) -o $@ editor_command_tests.c $(SUT_SRCS) $(MOCK_SRCS) $(TOOLBAR_SRCS) ../editor.c ../window.c $(LDFLAGS)
+
+build/editor_key_tests: editor_key_tests.c $(SUT_SRCS) $(MOCK_SRCS) $(TOOLBAR_SRCS) ../editor.c ../window.c acutest.h mock_ncurses.h | build
+	$(CC) $(EDITOR_TEST_CFLAGS) -o $@ editor_key_tests.c $(SUT_SRCS) $(MOCK_SRCS) $(TOOLBAR_SRCS) ../editor.c ../window.c $(LDFLAGS)
+
+run: $(TEST_BINS)
+	@for test in $(TEST_NAMES); do \
+		echo "Running build/$$test..."; \
+		./build/$$test || exit 1; \
+	done
 
 clean:
-	rm -f $(OBJS) $(TARGET)
 	rm -rf build
 
-.PHONY: all clean
+.PHONY: all clean run

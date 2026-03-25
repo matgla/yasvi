@@ -52,6 +52,7 @@ typedef struct {
   bool string_rendering_ongoing;
   bool multiline_comment_ongoing;
   int key;
+  struct Toolbar* toolbar;  // Widget-based bottom toolbar
 } Editor;
 
 void editor_process_key(Editor* editor, int key);
@@ -61,3 +62,4 @@ void editor_init(Editor* editor);
 void editor_deinit(Editor* editor);
 void editor_load_file(Editor* editor, const char* filename);
 void editor_create_new_file(Editor* editor);
+int editor_get_cursor_x(const Editor* editor);

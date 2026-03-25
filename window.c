@@ -38,6 +38,7 @@ void window_init(Window* window) {
   init_pair(4, COLOR_YELLOW, COLOR_BLACK);
   init_pair(5, COLOR_BLUE, COLOR_BLACK);
   init_pair(6, COLOR_CYAN, COLOR_BLACK);
+  init_pair(7, COLOR_RED, COLOR_BLACK);
 }
 
 void window_deinit(Window* window) {

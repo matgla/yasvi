@@ -22,12 +22,16 @@
 
 #include "buffer_row.h"
 
+// Forward declaration
+struct Filetype;
+
 typedef struct Buffer {
   BufferRow* head;
   BufferRow* tail;
   BufferRow* current_row;
   int number_of_rows;
   char* filename;
+  const struct Filetype* filetype;  // NULL for plain text
 } Buffer;
 
 Buffer* buffer_alloc();
@@ -61,3 +65,5 @@ void buffer_break_current_line(Buffer* buffer, int index);
 int buffer_join_current_line_with_previous(Buffer* buffer);
 
 const char* buffer_get_filename(const Buffer* buffer);
+int buffer_get_current_line_number(const Buffer* buffer);
+bool buffer_is_modified(const Buffer* buffer);

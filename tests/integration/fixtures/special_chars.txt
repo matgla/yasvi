@@ -1,0 +1,7 @@
+Special characters test:
+Tabs:	1	2	3
+Unicode: α β γ δ ε
+Symbols: © ® ™ § ¶
+Math: ∫ ∑ ∏ √ ∞
+Quotes: "double" 'single' `backtick`
+Escapes: \n \t \r \"

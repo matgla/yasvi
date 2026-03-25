@@ -15,19 +15,12 @@
  along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
-#pragma once
+/* This wrapper includes editor.c with mock ncurses instead of real ncurses */
 
-#include <ncurses.h>
+/* First include our mock ncurses to define all the types and functions */
+#include "mock_ncurses.h"
 
-typedef struct {
-  int width;
-  int height;
-} Window;
-
-void window_init(Window* window);
-void window_redraw_screen(const Window* window);
-void window_deinit(Window* window);
-
+/* Define the macros that window.h expects */
 #define COLOR_KEYWORD (COLOR_PAIR(1))
 #define COLOR_STRING (COLOR_PAIR(2))
 #define COLOR_COMMENT (COLOR_PAIR(3) | A_ITALIC)
@@ -35,4 +28,32 @@ void window_deinit(Window* window);
 #define COLOR_NUMBER (COLOR_PAIR(5))
 #define COLOR_PREPROCESSOR (COLOR_PAIR(6))
 #define COLOR_OTHER (A_NORMAL)
-#define COLOR_ERROR (COLOR_PAIR(7))
+
+/* Mock WINDOW structure */
+typedef struct {
+  int width;
+  int height;
+} WINDOW;
+
+static inline void window_init(WINDOW* window) {
+  window->width = 80;
+  window->height = 24;
+}
+
+static inline void window_redraw_screen(const WINDOW* window) {
+  (void)window;
+}
+
+static inline void window_deinit(WINDOW* window) {
+  (void)window;
+}
+
+/* Include highlight.h */
+#include "highlight.h"
+
+/* Prevent editor.h from including the real window.h */
+#define WINDOW_INCLUDED
+#define WINDOW MockWindow
+
+/* Now we can include the editor implementation */
+#include "../editor.c"
