@@ -140,6 +140,9 @@ static WidgetUpdateResult mode_update(Widget* widget, struct Toolbar* toolbar,
     case EditorState_ProcessingCommand:
       strcpy(data->mode_text, "-- COMMAND --");
       break;
+    case EditorState_FileManager:
+      strcpy(data->mode_text, "-- FILEMGR --");
+      break;
     case EditorState_Exiting:
       strcpy(data->mode_text, "-- EXITING --");
       break;
@@ -166,7 +169,7 @@ static int mode_draw(const Widget* widget, struct Toolbar* toolbar, int x, int y
 static int mode_get_min_width(const Widget* widget) {
   const ModeWidgetData* data = (const ModeWidgetData*)widget->data;
   int len = strlen(data->mode_text);
-  return len > 0 ? len : 12;  // 12 = strlen("-- NORMAL --")
+  return len > 0 ? len : 13;  // 13 = strlen("-- FILEMGR --")
 }
 
 static const WidgetVTable mode_vtable = {

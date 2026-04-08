@@ -25,10 +25,13 @@
 
 #include "command.h"
 #include "highlight.h"
+#include "file_manager.h"
+#include "search.h"
 #include "toolbar.h"
 #include "toolbar_widgets.h"
 
-#define EDITOR_TOP_BAR_HEIGHT 1
+#define EDITOR_TOP_BAR_HEIGHT 2
+// 1 is for tab bar
 // 1 is for separator line
 // 1 is for command line
 // 1 is for status bar
@@ -49,6 +52,7 @@ static void editor_home_cursor_x(Editor* editor);
 static void editor_home_cursor_y(Editor* editor);
 static void editor_home_cursor_xy(Editor* editor);
 static void editor_fix_cursor_position(Editor* editor);
+static int editor_get_content_offset_x(const Editor* editor);
 
 #ifdef __GNUC__
 char* itoa(int n, char* s, int base) {
@@ -73,10 +77,12 @@ char* itoa(int n, char* s, int base) {
 #endif
 
 int editor_get_cursor_x(const Editor* editor) {
-  if (editor->cursor.x + editor->start_column < editor->number_of_line_digits) {
+  int content_offset = editor_get_content_offset_x(editor);
+  int line_digit_width = 4;  // Base line number width
+  if (editor->cursor.x + editor->start_column < content_offset + line_digit_width) {
     return 0;
   }
-  return editor->cursor.x + editor->start_column - editor->number_of_line_digits;
+  return editor->cursor.x + editor->start_column - content_offset - line_digit_width;
 }
 
 static void editor_home_cursor_x(Editor* editor) {
@@ -117,7 +123,7 @@ static void editor_mark_dirty_from_cursor(Editor* editor) {
 }
 
 static void editor_home_cursor_y(Editor* editor) {
-  editor->cursor.y = 1;
+  editor->cursor.y = EDITOR_TOP_BAR_HEIGHT;
   editor->start_line = 0;
   editor_mark_dirty_whole_screen(editor);
 }
@@ -153,6 +159,132 @@ static void editor_clear_error_message(Editor* editor) {
     }
     free(editor->error_message);
     editor->error_message = NULL;
+  }
+}
+
+// Handle search pattern input (for / and ? commands)
+// Returns true if search should continue to next state
+static bool editor_collect_search_pattern(Editor* editor, int key) {
+  if (key == '\n') {
+    // Execute search
+    if (editor->search_buffer.buffer != NULL &&
+        strlen(editor->search_buffer.buffer) > 0) {
+      search_set_pattern(&editor->search, editor->search_buffer.buffer,
+                         editor->state == EditorState_SearchInputForward);
+      search_set_position(&editor->search,
+                          buffer_get_current_line_number(editor->current_buffer) -
+                            1,
+                          editor_get_cursor_x(editor));
+
+      bool found;
+      if (editor->state == EditorState_SearchInputForward) {
+        found = search_find_next(&editor->search, editor->current_buffer);
+      } else {
+        found = search_find_prev(&editor->search, editor->current_buffer);
+      }
+
+      if (found) {
+        // Move cursor to match
+        int target_line = editor->search.last_match_line;
+        int target_col = editor->search.last_match_col;
+        int current_line =
+          buffer_get_current_line_number(editor->current_buffer) - 1;
+
+        // Scroll to the line
+        int line_diff = target_line - current_line;
+        if (line_diff != 0) {
+          buffer_scroll_rows(editor->current_buffer, line_diff);
+          editor->start_line = target_line;
+          editor->cursor.y = EDITOR_TOP_BAR_HEIGHT;
+          editor_mark_dirty_whole_screen(editor);
+        }
+
+        // Move cursor to column
+        editor_home_cursor_x(editor);
+        editor_move_cursor_x(editor, target_col, false);
+      } else {
+        editor_set_error_message(editor, "Pattern not found");
+      }
+    }
+    command_deinit(&editor->search_buffer);
+    editor->state = EditorState_Running;
+    return true;
+  } else if (key == 27) {
+    // Cancel search
+    command_deinit(&editor->search_buffer);
+    editor->state = EditorState_Running;
+    return true;
+  } else if (key == KEY_BACKSPACE || key == 127) {
+    if (editor->search_buffer.cursor_position > 0) {
+      editor->search_buffer.cursor_position--;
+      editor->search_buffer.buffer[editor->search_buffer.cursor_position] =
+        '\0';
+    }
+    return false;
+  }
+  command_append(&editor->search_buffer, (char)key);
+  return false;
+}
+
+// Jump to next search match
+static void editor_search_next(Editor* editor) {
+  if (editor->search.pattern == NULL) {
+    return;
+  }
+
+  // Do NOT update position from cursor - continue from last match
+  // The search state already tracks where we are
+  bool found = search_find_next(&editor->search, editor->current_buffer);
+
+  if (found) {
+    int target_line = editor->search.last_match_line;
+    int target_col = editor->search.last_match_col;
+    int current_line =
+      buffer_get_current_line_number(editor->current_buffer) - 1;
+
+    int line_diff = target_line - current_line;
+    if (line_diff != 0) {
+      buffer_scroll_rows(editor->current_buffer, line_diff);
+      editor->start_line = target_line;
+      editor->cursor.y = EDITOR_TOP_BAR_HEIGHT;
+      editor_mark_dirty_whole_screen(editor);
+    }
+
+    editor_home_cursor_x(editor);
+    editor_move_cursor_x(editor, target_col, false);
+  } else {
+    editor_set_error_message(editor, "Pattern not found");
+  }
+}
+
+// Jump to previous search match
+static void editor_search_prev(Editor* editor) {
+  if (editor->search.pattern == NULL) {
+    return;
+  }
+
+  // Do NOT update position from cursor - continue from last match
+  // The search state already tracks where we are
+  bool found = search_find_prev(&editor->search, editor->current_buffer);
+
+  if (found) {
+    int target_line = editor->search.last_match_line;
+    int target_col = editor->search.last_match_col;
+    int current_line =
+      buffer_get_current_line_number(editor->current_buffer) - 1;
+
+    int line_diff = target_line - current_line;
+    if (line_diff != 0) {
+      buffer_scroll_rows(editor->current_buffer, line_diff);
+      editor->start_line = target_line;
+      editor->cursor.y = EDITOR_TOP_BAR_HEIGHT;
+      editor_mark_dirty_whole_screen(editor);
+    }
+
+    editor_home_cursor_x(editor);
+    editor_move_cursor_x(editor, target_col, false);
+  } else {
+    editor_set_error_message(editor, "Pattern not found");
   }
 }
 
@@ -214,6 +346,177 @@ static CommandResult editor_process_command(Editor* editor) {
 
   if (command->buffer[0] == 'w') {
     return editor_process_save_command(editor);
+  }
+
+  if (strcmp(command->buffer, "bd") == 0 || strcmp(command->buffer, "bdelete") == 0) {
+    editor_close_current_buffer(editor);
+    return CommandResult_Success;
+  }
+
+  // Handle :bN where N is buffer index (1-indexed for user)
+  if (command->buffer[0] == 'b' && command->buffer[1] >= '1' && command->buffer[1] <= '9') {
+    int target = atoi(&command->buffer[1]) - 1;  // Convert to 0-indexed
+    if (target >= 0 && (size_t)target < editor->number_of_buffers) {
+      editor_switch_to_buffer_by_index(editor, (size_t)target);
+      return CommandResult_Success;
+    }
+    editor_set_error_message(editor, "Invalid buffer number");
+    return CommandResult_CommandNotFound;
+  }
+
+  // Handle :bn (next buffer) and :bp (previous buffer)
+  if (strcmp(command->buffer, "bn") == 0) {
+    editor_switch_to_next_buffer(editor);
+    return CommandResult_Success;
+  }
+  if (strcmp(command->buffer, "bp") == 0) {
+    editor_switch_to_prev_buffer(editor);
+    return CommandResult_Success;
+  }
+
+  // Handle substitution commands: :s/old/new/flags
+  if (command->buffer[0] == 's') {
+    // Parse substitution pattern: s/pattern/replacement/flags
+    const char* cmd = command->buffer + 1;  // Skip 's'
+    if (*cmd != '/') {
+      editor_set_error_message(editor, "Invalid substitute syntax");
+      return CommandResult_CommandNotFound;
+    }
+    cmd++;  // Skip first '/'
+
+    // Find pattern end
+    const char* pattern_start = cmd;
+    const char* pattern_end = strchr(cmd, '/');
+    if (pattern_end == NULL) {
+      editor_set_error_message(editor, "Invalid substitute syntax");
+      return CommandResult_CommandNotFound;
+    }
+
+    size_t pattern_len = pattern_end - pattern_start;
+    char* pattern = (char*)malloc(pattern_len + 1);
+    if (pattern == NULL) {
+      editor_set_error_message(editor, "Memory allocation failed");
+      return CommandResult_CommandNotFound;
+    }
+    strncpy(pattern, pattern_start, pattern_len);
+    pattern[pattern_len] = '\0';
+
+    // Find replacement end
+    const char* replacement_start = pattern_end + 1;
+    const char* replacement_end = strchr(replacement_start, '/');
+    if (replacement_end == NULL) {
+      replacement_end = replacement_start + strlen(replacement_start);
+    }
+
+    size_t replacement_len = replacement_end - replacement_start;
+    char* replacement = (char*)malloc(replacement_len + 1);
+    if (replacement == NULL) {
+      free(pattern);
+      editor_set_error_message(editor, "Memory allocation failed");
+      return CommandResult_CommandNotFound;
+    }
+    strncpy(replacement, replacement_start, replacement_len);
+    replacement[replacement_len] = '\0';
+
+    // Check for flags
+    bool global = false;
+    if (replacement_end != NULL && *(replacement_end + 1) != '\0') {
+      const char* flags = replacement_end + 1;
+      if (strchr(flags, 'g') != NULL) {
+        global = true;
+      }
+    }
+
+    // Execute substitution on current line
+    int current_line =
+      buffer_get_current_line_number(editor->current_buffer) - 1;
+    ReplaceResult result = search_replace_line(
+      editor->current_buffer, current_line, pattern, replacement, global);
+
+    if (result.replacements > 0) {
+      static char msg[64];
+      snprintf(msg, sizeof(msg), "Replaced %d occurrence(s)",
+               result.replacements);
+      editor_set_error_message(editor, msg);
+      editor_mark_dirty_from_cursor(editor);
+    } else {
+      editor_set_error_message(editor, "Pattern not found");
+    }
+
+    free(pattern);
+    free(replacement);
+    return CommandResult_Success;
+  }
+
+  // Handle %s substitution: :%s/old/new/g
+  if (command->buffer[0] == '%' && command->buffer[1] == 's') {
+    const char* cmd = command->buffer + 2;  // Skip '%s'
+    if (*cmd != '/') {
+      editor_set_error_message(editor, "Invalid substitute syntax");
+      return CommandResult_CommandNotFound;
+    }
+    cmd++;  // Skip first '/'
+
+    // Find pattern end
+    const char* pattern_start = cmd;
+    const char* pattern_end = strchr(cmd, '/');
+    if (pattern_end == NULL) {
+      editor_set_error_message(editor, "Invalid substitute syntax");
+      return CommandResult_CommandNotFound;
+    }
+
+    size_t pattern_len = pattern_end - pattern_start;
+    char* pattern = (char*)malloc(pattern_len + 1);
+    if (pattern == NULL) {
+      editor_set_error_message(editor, "Memory allocation failed");
+      return CommandResult_CommandNotFound;
+    }
+    strncpy(pattern, pattern_start, pattern_len);
+    pattern[pattern_len] = '\0';
+
+    // Find replacement end
+    const char* replacement_start = pattern_end + 1;
+    const char* replacement_end = strchr(replacement_start, '/');
+    if (replacement_end == NULL) {
+      replacement_end = replacement_start + strlen(replacement_start);
+    }
+
+    size_t replacement_len = replacement_end - replacement_start;
+    char* replacement = (char*)malloc(replacement_len + 1);
+    if (replacement == NULL) {
+      free(pattern);
+      editor_set_error_message(editor, "Memory allocation failed");
+      return CommandResult_CommandNotFound;
+    }
+    strncpy(replacement, replacement_start, replacement_len);
+    replacement[replacement_len] = '\0';
+
+    // Check for flags
+    bool global = false;
+    if (replacement_end != NULL && *(replacement_end + 1) != '\0') {
+      const char* flags = replacement_end + 1;
+      if (strchr(flags, 'g') != NULL) {
+        global = true;
+      }
+    }
+
+    // Execute substitution on entire buffer
+    ReplaceResult result = search_replace_all(
+      editor->current_buffer, pattern, replacement, global);
+
+    if (result.replacements > 0) {
+      static char msg[64];
+      snprintf(msg, sizeof(msg), "Replaced %d occurrence(s) in %d line(s)",
+               result.replacements, result.lines_affected);
+      editor_set_error_message(editor, msg);
+      editor_mark_dirty_whole_screen(editor);
+    } else {
+      editor_set_error_message(editor, "Pattern not found");
+    }
+
+    free(pattern);
+    free(replacement);
+    return CommandResult_Success;
   }
 
   return CommandResult_CommandNotFound;
@@ -335,19 +638,19 @@ static void editor_move_cursor_y(Editor* editor, int y) {
   const int previous_start = editor->start_line;
   editor->cursor.y += y;
   if (editor->cursor.y <= EDITOR_TOP_BAR_HEIGHT) {
-    editor->start_line += (editor->cursor.y - 1);
+    // Calculate how many lines past the top we went
+    int lines_past_top = EDITOR_TOP_BAR_HEIGHT - editor->cursor.y + 1;
+    editor->start_line -= lines_past_top;
     if (editor->start_line < 0) {
       editor->start_line = 0;
     }
-    editor->cursor.y = 1;
-  } else if (editor->cursor.y > editor->window.height - EDITOR_BOTTOM_BAR_HEIGHT -
-                                  EDITOR_TOP_BAR_HEIGHT) {
+    editor->cursor.y = EDITOR_TOP_BAR_HEIGHT;
+  } else if (editor->cursor.y >= editor->window.height - EDITOR_BOTTOM_BAR_HEIGHT) {
+    // Cursor went past the last content row
     const int number_of_lines = buffer_get_number_of_lines(editor->current_buffer);
     editor->start_line +=
-      (editor->cursor.y -
-       (editor->window.height - EDITOR_BOTTOM_BAR_HEIGHT - EDITOR_TOP_BAR_HEIGHT));
-    editor->cursor.y =
-      editor->window.height - EDITOR_BOTTOM_BAR_HEIGHT - EDITOR_TOP_BAR_HEIGHT;
+      (editor->cursor.y - (editor->window.height - EDITOR_BOTTOM_BAR_HEIGHT - 1));
+    editor->cursor.y = editor->window.height - EDITOR_BOTTOM_BAR_HEIGHT - 1;
     if (editor->start_line > number_of_lines - editor->window.height +
                                EDITOR_BOTTOM_BAR_HEIGHT + EDITOR_TOP_BAR_HEIGHT) {
       editor->start_line = number_of_lines - editor->window.height +
@@ -439,6 +742,40 @@ static void editor_process_editor_key(Editor* editor, int key) {
       int offset_to_word =
         buffer_row_get_offset_to_prev_word(current_row, editor_get_cursor_x(editor));
       editor_move_cursor_x(editor, offset_to_word, false);
+      return;
+    }
+    case '/': {
+      // Start forward search
+      editor_clear_error_message(editor);
+      if (editor->search_buffer.buffer == NULL) {
+        command_init(&editor->search_buffer);
+      } else {
+        editor->search_buffer.cursor_position = 0;
+        editor->search_buffer.buffer[0] = '\0';
+      }
+      editor->state = EditorState_SearchInputForward;
+      return;
+    }
+    case '?': {
+      // Start backward search
+      editor_clear_error_message(editor);
+      if (editor->search_buffer.buffer == NULL) {
+        command_init(&editor->search_buffer);
+      } else {
+        editor->search_buffer.cursor_position = 0;
+        editor->search_buffer.buffer[0] = '\0';
+      }
+      editor->state = EditorState_SearchInputBackward;
+      return;
+    }
+    case 'n': {
+      // Find next match
+      editor_search_next(editor);
+      return;
+    }
+    case 'N': {
+      // Find previous match
+      editor_search_prev(editor);
       return;
     }
     case 'g': {
@@ -572,41 +909,53 @@ static void editor_decorate_and_draw_line(Editor* editor,
   attrset(COLOR_OTHER);
 }
 
+int editor_get_content_offset_x(const Editor* editor) {
+  if (editor->file_manager && editor->file_manager->visible) {
+    return editor->file_manager->width;
+  }
+  return 0;
+}
+
 static void editor_draw_buffers(Editor* editor) {
-  int line_number = 1;
+  int line_number = EDITOR_TOP_BAR_HEIGHT;
   editor->string_rendering_ongoing = false;
   editor->multiline_comment_ongoing = false;
+
+  // Calculate content offset based on file manager visibility
+  int content_offset = editor_get_content_offset_x(editor);
+  editor->editor_offset_x = content_offset;
 
   if (editor->end_line_mode) {
     editor_move_cursor_to_end(editor);
   }
   if (editor->current_buffer != NULL) {
     // Draw current buffer
-    const int window_height =
-      editor->window.height - EDITOR_BOTTOM_BAR_HEIGHT - EDITOR_TOP_BAR_HEIGHT + 1;
+    // Content area: from EDITOR_TOP_BAR_HEIGHT to (window.height - EDITOR_BOTTOM_BAR_HEIGHT)
+    const int window_height = editor->window.height - EDITOR_BOTTOM_BAR_HEIGHT;
     BufferRow* row = buffer_get_row(editor->current_buffer, editor->start_line);
     // Fixed 4-digit line number width to prevent content shifting
     // when line count goes from 99 to 100, 999 to 1000, etc.
     (void)count_digits;  // Unused now, but kept for potential future use
-    editor->number_of_line_digits = 4;
+    editor->number_of_line_digits = 4 + content_offset;
     if (editor->cursor.x <= editor->number_of_line_digits) {
       editor->cursor.x = editor->number_of_line_digits;
     }
 
     while (line_number < window_height) {
-      int row_number = line_number + editor->start_line;
+      // Calculate actual row number: subtract top bar height and add start_line offset
+      int row_number = line_number - EDITOR_TOP_BAR_HEIGHT + 1 + editor->start_line;
 
       if (row != NULL && row->dirty) {
         static char line_buffer[32];
         itoa(row_number, line_buffer, 10);
         int line_length = strlen(line_buffer);
-        for (int i = line_length; i < editor->number_of_line_digits; ++i) {
+        for (int i = line_length; i < editor->number_of_line_digits - content_offset; ++i) {
           line_buffer[i] = ' ';
         }
-        line_buffer[editor->number_of_line_digits] = '\0';
+        line_buffer[editor->number_of_line_digits - content_offset] = '\0';
 
         attrset(COLOR_OTHER);
-        mvaddstr(line_number, 0, line_buffer);
+        mvaddstr(line_number, content_offset, line_buffer);
         if (editor->start_column < buffer_row_get_length(row)) {
           editor_decorate_and_draw_line(editor, line_number, row,
                                         editor->number_of_line_digits);
@@ -618,7 +967,7 @@ static void editor_draw_buffers(Editor* editor) {
       } else if (row != NULL) {
         row = row->next;
       } else if (row == NULL) {
-        move(line_number, 0);
+        move(line_number, content_offset);
         clrtoeol();
       }
 
@@ -627,11 +976,40 @@ static void editor_draw_buffers(Editor* editor) {
   }
 }
 
+static void editor_draw_file_manager(Editor* editor) {
+  if (!editor->file_manager || !editor->file_manager->visible) {
+    return;
+  }
+
+  const int window_height =
+    editor->window.height - EDITOR_BOTTOM_BAR_HEIGHT - EDITOR_TOP_BAR_HEIGHT + 1;
+
+  file_manager_draw(editor->file_manager, 1, window_height);
+}
+
 static void editor_process_gkey_sequence(Editor* editor, int key) {
   if (key == 'g') {
     editor->key_sequence[0] = 0;
     editor_move_to_top(editor);
     editor_fix_cursor_position(editor);
+  } else if (key == 't') {
+    editor->key_sequence[0] = 0;
+    // If repeat_count is set, switch to that buffer index directly
+    // e.g., 2gt switches to buffer 2 (1-indexed for user)
+    if (editor->repeat_count > 0) {
+      size_t target_index = (size_t)editor->repeat_count;
+      if (target_index < editor->number_of_buffers) {
+        editor_switch_to_buffer_by_index(editor, target_index);
+      } else {
+        editor_set_error_message(editor, "Buffer index out of range");
+      }
+      editor->repeat_count = 0;
+    } else {
+      editor_switch_to_next_buffer(editor);
+    }
+  } else if (key == 'T') {
+    editor->key_sequence[0] = 0;
+    editor_switch_to_prev_buffer(editor);
   } else {
     editor->key_sequence[0] = 0;
   }
@@ -790,6 +1168,40 @@ void editor_insert_char(Editor* editor, int key) {
   };
 }
 
+static void editor_process_file_manager_key(Editor* editor, int key) {
+  switch (key) {
+    case 27:  // Escape
+      editor->state = EditorState_Running;
+      break;
+    case 'j':
+    case KEY_DOWN:
+      file_manager_move_cursor_down(editor->file_manager);
+      break;
+    case 'k':
+    case KEY_UP:
+      file_manager_move_cursor_up(editor->file_manager);
+      break;
+    case 'h':
+    case KEY_LEFT:
+      file_manager_go_to_parent(editor->file_manager);
+      break;
+    case 'l':
+    case KEY_RIGHT:
+    case '\n':  // Enter
+    case 13:
+      editor_file_manager_select(editor);
+      break;
+    case ' ':
+    case 'o':
+      file_manager_toggle_expand(editor->file_manager);
+      break;
+    case 2:  // Ctrl+B
+      editor_toggle_file_manager(editor);
+      editor->state = EditorState_Running;
+      break;
+  }
+}
+
 void editor_process_key(Editor* editor, int key) {
   // Update debug keystroke widget if available
   if (editor->toolbar) {
@@ -797,6 +1209,20 @@ void editor_process_key(Editor* editor, int key) {
     if (debug_widget) {
       widget_debug_keystroke_add_key(debug_widget, key);
     }
+  }
+
+  // Handle Ctrl+B to toggle file manager from any state except editing
+  if (key == 2 && editor->state != EditorState_EditMode) {
+    if (editor->file_manager && editor->file_manager->visible) {
+      // If file manager is visible, toggle it off and return to running
+      editor_toggle_file_manager(editor);
+      editor->state = EditorState_Running;
+    } else {
+      // Toggle on and switch to file manager state
+      editor_toggle_file_manager(editor);
+      editor->state = EditorState_FileManager;
+    }
+    return;
   }
 
   bool done = false;
@@ -863,6 +1289,15 @@ void editor_process_key(Editor* editor, int key) {
         }
         editor_insert_char(editor, key);
         return;
+      case EditorState_FileManager:
+        editor_process_file_manager_key(editor, key);
+        return;
+      case EditorState_SearchInputForward:
+      case EditorState_SearchInputBackward: {
+        if (!editor_collect_search_pattern(editor, key)) {
+          return;
+        }
+      } break;
       case EditorState_Exiting:
         return;
     };
@@ -878,6 +1313,22 @@ void editor_draw_status_bar(const Editor* editor) {
     if (editor->command.buffer != NULL) {
       mvaddch(editor->window.height - 1, 0, ':');
       mvaddstr(editor->window.height - 1, 1, editor->command.buffer);
+    }
+  }
+  if (editor->state == EditorState_SearchInputForward) {
+    if (editor->search_buffer.buffer != NULL) {
+      mvaddch(editor->window.height - 1, 0, '/');
+      mvaddstr(editor->window.height - 1, 1, editor->search_buffer.buffer);
+    } else {
+      mvaddch(editor->window.height - 1, 0, '/');
+    }
+  }
+  if (editor->state == EditorState_SearchInputBackward) {
+    if (editor->search_buffer.buffer != NULL) {
+      mvaddch(editor->window.height - 1, 0, '?');
+      mvaddstr(editor->window.height - 1, 1, editor->search_buffer.buffer);
+    } else {
+      mvaddch(editor->window.height - 1, 0, '?');
     }
   }
   if (editor->error_message) {
@@ -897,6 +1348,8 @@ void editor_draw_status_bar(const Editor* editor) {
 void editor_redraw_screen(Editor* editor) {
   // clear();
   curs_set(0);
+  editor_draw_tab_bar(editor);
+  editor_draw_file_manager(editor);
   editor_draw_buffers(editor);
 
   // Use widget-based toolbar if available
@@ -906,6 +1359,23 @@ void editor_redraw_screen(Editor* editor) {
   } else {
     // Fallback to old status bar
     editor_draw_status_bar(editor);
+  }
+
+  // Draw search input line if in search mode (overrides toolbar/status bar)
+  if (editor->state == EditorState_SearchInputForward) {
+    if (editor->search_buffer.buffer != NULL) {
+      mvaddch(editor->window.height - 1, 0, '/');
+      mvaddstr(editor->window.height - 1, 1, editor->search_buffer.buffer);
+    } else {
+      mvaddch(editor->window.height - 1, 0, '/');
+    }
+  } else if (editor->state == EditorState_SearchInputBackward) {
+    if (editor->search_buffer.buffer != NULL) {
+      mvaddch(editor->window.height - 1, 0, '?');
+      mvaddstr(editor->window.height - 1, 1, editor->search_buffer.buffer);
+    } else {
+      mvaddch(editor->window.height - 1, 0, '?');
+    }
   }
 
   switch (editor->state) {
@@ -922,6 +1392,18 @@ void editor_redraw_screen(Editor* editor) {
 
 void editor_init(Editor* editor) {
   window_init(&editor->window);
+
+  // Create and initialize file manager
+  editor->file_manager = file_manager_alloc();
+  if (editor->file_manager) {
+    file_manager_init(editor->file_manager, NULL);
+    editor->file_manager->visible = false;
+  }
+  editor->editor_offset_x = 0;
+
+  // Initialize search state
+  search_init(&editor->search);
+  command_init(&editor->search_buffer);
 
   // Create and initialize toolbar
   editor->toolbar = malloc(sizeof(struct Toolbar));
@@ -952,6 +1434,7 @@ void editor_init(Editor* editor) {
   }
 
   editor_home_cursor_xy(editor);
+  editor->current_buffer_index = 0;
   move(editor->cursor.y, editor->cursor.x);
 }
 
@@ -977,7 +1460,117 @@ void editor_deinit(Editor* editor) {
     free(editor->toolbar);
     editor->toolbar = NULL;
   }
+  // Clean up file manager
+  if (editor->file_manager) {
+    file_manager_free(editor->file_manager);
+    editor->file_manager = NULL;
+  }
+  // Clean up search state
+  search_deinit(&editor->search);
+  if (editor->search_buffer.buffer != NULL) {
+    command_deinit(&editor->search_buffer);
+  }
   window_deinit(&editor->window);
+}
+
+void editor_toggle_file_manager(Editor* editor) {
+  if (!editor->file_manager) {
+    return;
+  }
+
+  // Get current offset before toggle
+  int old_offset = editor_get_content_offset_x(editor);
+
+  file_manager_toggle_visibility(editor->file_manager);
+
+  // Get new offset after toggle
+  int new_offset = editor_get_content_offset_x(editor);
+  int offset_delta = new_offset - old_offset;
+  
+  // Update editor_offset_x immediately (also updated during draw)
+  editor->editor_offset_x = new_offset;
+
+  // Mark all rows dirty to force redraw
+  editor_mark_dirty_whole_screen(editor);
+
+  // Adjust cursor position by the offset change
+  editor->number_of_line_digits = 4 + new_offset;
+  editor->cursor.x += offset_delta;
+
+  // Ensure cursor stays within valid bounds
+  if (editor->cursor.x < editor->number_of_line_digits) {
+    editor->cursor.x = editor->number_of_line_digits;
+  }
+}
+
+static Buffer* editor_find_buffer_by_filename(Editor* editor, const char* filename) {
+  for (size_t i = 0; i < editor->number_of_buffers; ++i) {
+    const char* buf_filename = buffer_get_filename(editor->buffers[i]);
+    if (buf_filename && strcmp(buf_filename, filename) == 0) {
+      return editor->buffers[i];
+    }
+  }
+  return NULL;
+}
+
+void editor_file_manager_select(Editor* editor) {
+  if (!editor->file_manager || !editor->file_manager->cursor) {
+    return;
+  }
+
+  FileManagerEntry* entry = file_manager_get_selected_entry(editor->file_manager);
+  if (!entry) {
+    return;
+  }
+
+  if (entry->type == FileManagerEntryType_Directory) {
+    file_manager_toggle_expand(editor->file_manager);
+  } else {
+    // Check if file is already open in a buffer
+    Buffer* existing = editor_find_buffer_by_filename(editor, entry->full_path);
+    if (existing) {
+      // Find the index of the existing buffer
+      for (size_t i = 0; i < editor->number_of_buffers; ++i) {
+        if (editor->buffers[i] == existing) {
+          editor->current_buffer_index = i;
+          break;
+        }
+      }
+      editor->current_buffer = existing;
+      buffer_scroll_to_top(editor->current_buffer);
+      editor_set_error_message(editor, "Switched to buffer");
+    } else {
+      // Load the file into a new buffer
+      Buffer* buffer = buffer_alloc();
+      if (buffer == NULL) {
+        editor_set_error_message(editor, "Failed to allocate memory for buffer");
+        return;
+      }
+      buffer_load_from_file(buffer, entry->full_path);
+      if (!editor_append_buffer(editor, buffer)) {
+        editor_set_error_message(editor, "Failed to append buffer");
+        buffer_free(buffer);
+        return;
+      }
+      editor->current_buffer = buffer;
+      editor->current_buffer_index = editor->number_of_buffers - 1;
+      editor_set_error_message(editor, "Loaded file");
+    }
+
+    // Reset view to top of file
+    editor->start_line = 0;
+    editor->start_column = 0;
+    editor_mark_dirty_whole_screen(editor);
+
+    // Close file manager and switch back to normal mode
+    file_manager_set_visible(editor->file_manager, false);
+    editor->state = EditorState_Running;
+
+    // Adjust cursor position after closing file manager (shift left by sidebar width)
+    editor->number_of_line_digits = 4;  // Reset to base value
+    editor->cursor.x = editor->number_of_line_digits;
+    editor->cursor.y = EDITOR_TOP_BAR_HEIGHT;  // First line of content
+  }
 }
 
 void editor_load_file(Editor* editor, const char* filename) {
@@ -994,6 +1587,7 @@ void editor_load_file(Editor* editor, const char* filename) {
   }
   if (editor->current_buffer == NULL) {
     editor->current_buffer = buffer;
+    editor->current_buffer_index = 0;
   }
 }
 
@@ -1011,5 +1605,175 @@ void editor_create_new_file(Editor* editor) {
   }
   if (editor->current_buffer == NULL) {
     editor->current_buffer = buffer;
+    editor->current_buffer_index = 0;
   }
+}
+
+// ============================================================================
+// Buffer/Tab Management
+// ============================================================================
+
+void editor_switch_to_buffer_by_index(Editor* editor, size_t index) {
+  if (index >= editor->number_of_buffers) {
+    editor_set_error_message(editor, "Invalid buffer index");
+    return;
+  }
+  editor->current_buffer_index = index;
+  editor->current_buffer = editor->buffers[index];
+  buffer_scroll_to_top(editor->current_buffer);
+  editor->start_line = 0;
+  editor->start_column = 0;
+  editor_home_cursor_xy(editor);
+  editor_mark_dirty_whole_screen(editor);
+}
+
+void editor_switch_to_next_buffer(Editor* editor) {
+  if (editor->number_of_buffers <= 1) {
+    return;
+  }
+  size_t next_index = editor->current_buffer_index + 1;
+  if (next_index >= editor->number_of_buffers) {
+    next_index = 0;  // Wrap around to first buffer
+  }
+  editor_switch_to_buffer_by_index(editor, next_index);
+}
+
+void editor_switch_to_prev_buffer(Editor* editor) {
+  if (editor->number_of_buffers <= 1) {
+    return;
+  }
+  size_t prev_index;
+  if (editor->current_buffer_index == 0) {
+    prev_index = editor->number_of_buffers - 1;  // Wrap around to last buffer
+  } else {
+    prev_index = editor->current_buffer_index - 1;
+  }
+  editor_switch_to_buffer_by_index(editor, prev_index);
+}
+
+void editor_close_current_buffer(Editor* editor) {
+  if (editor->number_of_buffers <= 1) {
+    editor_set_error_message(editor, "Cannot close the last buffer");
+    return;
+  }
+
+  // Free the current buffer
+  buffer_free(editor->buffers[editor->current_buffer_index]);
+
+  // Shift remaining buffers down
+  for (size_t i = editor->current_buffer_index; i < editor->number_of_buffers - 1; i++) {
+    editor->buffers[i] = editor->buffers[i + 1];
+  }
+  editor->number_of_buffers--;
+
+  // Reallocate the buffers array
+  Buffer** new_buffers = (Buffer**)realloc(
+    editor->buffers, sizeof(Buffer*) * editor->number_of_buffers);
+  if (new_buffers != NULL || editor->number_of_buffers == 0) {
+    editor->buffers = new_buffers;
+  }
+
+  // Switch to the previous buffer, or keep current index if possible
+  if (editor->current_buffer_index > 0) {
+    editor->current_buffer_index--;
+  }
+  // Otherwise stay at 0 (the new first buffer after shifting)
+  editor->current_buffer = editor->buffers[editor->current_buffer_index];
+  buffer_scroll_to_top(editor->current_buffer);
+  editor->start_line = 0;
+  editor->start_column = 0;
+  editor_home_cursor_xy(editor);
+  editor_mark_dirty_whole_screen(editor);
+}
+
+void editor_draw_tab_bar(Editor* editor) {
+  if (editor->number_of_buffers == 0) {
+    return;
+  }
+
+  // Clear the tab bar area (row 0)
+  attrset(COLOR_OTHER);
+  move(0, 0);
+  for (int i = 0; i < editor->window.width; i++) {
+    addch(' ');
+  }
+
+  int x = 0;
+  const int max_tab_width = 20;
+  const int min_tab_width = 8;
+
+  for (size_t i = 0; i < editor->number_of_buffers; i++) {
+    if (x >= editor->window.width - min_tab_width) {
+      // Not enough space for more tabs, show indicator
+      attrset(COLOR_OTHER | A_BOLD);
+      mvaddstr(0, editor->window.width - 3, "...");
+      attrset(COLOR_OTHER);
+      break;
+    }
+
+    const char* filename = buffer_get_filename(editor->buffers[i]);
+    if (!filename) {
+      filename = "[No Name]";
+    }
+
+    // Extract just the basename from the path
+    const char* basename = filename;
+    const char* last_slash = strrchr(filename, '/');
+    if (last_slash) {
+      basename = last_slash + 1;
+    }
+
+    // Calculate tab width
+    int name_len = strlen(basename);
+    bool is_modified = buffer_is_modified(editor->buffers[i]);
+    int tab_width = name_len + (is_modified ? 2 : 0) + 3;  // name + [+] + brackets + space
+    if (tab_width > max_tab_width) {
+      tab_width = max_tab_width;
+    }
+    if (tab_width < min_tab_width) {
+      tab_width = min_tab_width;
+    }
+
+    // Ensure we don't overflow
+    if (x + tab_width > editor->window.width) {
+      tab_width = editor->window.width - x;
+      if (tab_width < 4) break;
+    }
+
+    // Draw tab with highlighting for current buffer
+    if (i == editor->current_buffer_index) {
+      attrset(COLOR_PAIR(4) | A_BOLD | A_REVERSE);  // Yellow background for active tab
+    } else {
+      attrset(COLOR_OTHER | A_DIM);
+    }
+
+    // Draw tab content
+    char tab_content[32];
+    int content_len = snprintf(tab_content, sizeof(tab_content), " %s%s ",
+                               basename, is_modified ? "+" : "");
+    if (content_len > tab_width - 1) {
+      // Truncate and add ellipsis
+      tab_content[tab_width - 2] = '\0';
+      strncat(tab_content, " ", sizeof(tab_content) - strlen(tab_content) - 1);
+    }
+
+    mvaddnstr(0, x, tab_content, tab_width - 1);
+    x += tab_width;
+
+    // Draw separator between tabs
+    if (i < editor->number_of_buffers - 1 && x < editor->window.width) {
+      attrset(COLOR_OTHER | A_DIM);
+      mvaddch(0, x - 1, '|');
+    }
+  }
+
+  attrset(COLOR_OTHER);
+
+  // Draw separator line (row 1)
+  attrset(COLOR_OTHER | A_DIM);
+  move(1, 0);
+  for (int i = 0; i < editor->window.width; i++) {
+    addch('-');
+  }
+  attrset(COLOR_OTHER);
 }

@@ -55,6 +55,7 @@ static inline void window_deinit(MockWindow* window) {
 #include "buffer.h"
 #include "command.h"
 #include "cursor.h"
+#include "search.h"
 
 #undef WINDOW
 
@@ -64,6 +65,9 @@ typedef enum {
   EditorState_CollectingCommand,
   EditorState_ProcessingCommand,
   EditorState_EditMode,
+  EditorState_FileManager,
+  EditorState_SearchInputForward,
+  EditorState_SearchInputBackward,
   EditorState_Exiting,
 } EditorState;
 
@@ -77,6 +81,7 @@ typedef struct {
   Buffer* current_buffer;
   Buffer** buffers;
   size_t number_of_buffers;
+  size_t current_buffer_index;  // Index of current buffer in buffers array
   bool end_line_mode;
   char* status_bar;
   char key_sequence[32];
@@ -88,6 +93,10 @@ typedef struct {
   bool multiline_comment_ongoing;
   int key;
   void* toolbar;  // Widget-based bottom toolbar (opaque pointer for tests)
+  void* file_manager;
+  int editor_offset_x;
+  SearchState search;
+  Command search_buffer;
 } Editor;
 
 /* External functions */
@@ -105,6 +114,8 @@ static void setup_editor(Editor* editor) {
   editor->number_of_line_digits = 4;
   editor->cursor.x = editor->number_of_line_digits;
   editor->cursor.y = 1;
+  editor->file_manager = NULL;
+  editor->editor_offset_x = 0;
 }
 
 /* Helper to create a buffer with multiple lines */

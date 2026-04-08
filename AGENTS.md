@@ -24,6 +24,7 @@ The project is licensed under GNU General Public License v3.0 (GPL-3.0).
 ├── editor.c/h          # Core editor logic, key handling, state management
 ├── buffer.c/h          # Text buffer management (linked list of rows)
 ├── buffer_row.c/h      # Individual line operations and syntax highlighting
+├── file_manager.c/h    # File manager sidebar (NERDTree-like)
 ├── window.c/h          # ncurses window initialization and color pairs
 ├── command.c/h         # Command line handling (ex commands)
 ├── cursor.h            # Cursor position structure definition
@@ -56,7 +57,14 @@ The project is licensed under GNU General Public License v3.0 (GPL-3.0).
    - Row insertion, deletion, and navigation
    - Line joining and breaking operations
 
-3. **BufferRow** (`buffer_row.c/h`): Individual line operations:
+3. **FileManager** (`file_manager.c/h`): NERDTree-like file browser sidebar:
+   - Directory tree navigation with expandable folders
+   - File selection to open in editor
+   - Toggle visibility with Ctrl+B
+   - Vim-style navigation (j/k for up/down, h/l for parent/enter)
+   - Visual indicator: `-- FILEMGR --` mode in status bar
+
+4. **BufferRow** (`buffer_row.c/h`): Individual line operations:
    - Character insertion and deletion
    - Word navigation (next/prev word)
    - Syntax highlighting for C language
@@ -171,6 +179,7 @@ clang-format -i editor.c
 - **Normal mode**: Navigation and command execution
 - **Insert mode**: Text insertion
 - **Command mode**: Ex-style commands (`:w`, `:q`, etc.)
+- **File Manager mode**: File browser navigation (toggle with Ctrl+B)
 
 ### Vi-style Commands
 
@@ -178,6 +187,17 @@ clang-format -i editor.c
 - Editing: `i`, `a`, `o`, `x`, `dd`, `dw`
 - Commands: `:w`, `:q`, `:wq`
 - Repeat counts: Numeric prefixes for commands
+
+### File Manager (Ctrl+B to toggle)
+
+When file manager sidebar is visible:
+- `j` / `↓`: Move cursor down
+- `k` / `↑`: Move cursor up
+- `h` / `←`: Go to parent directory
+- `l` / `→` / `Enter`: Open file or expand directory
+- `Space` / `o`: Toggle directory expand/collapse
+- `Escape`: Return to normal mode
+- `Ctrl+B`: Close file manager sidebar
 
 ### Syntax Highlighting
 

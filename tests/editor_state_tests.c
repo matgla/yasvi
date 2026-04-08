@@ -58,12 +58,18 @@ static inline void window_deinit(MockWindow* window) {
 
 #undef WINDOW
 
+/* Include search.h for SearchState */
+#include "search.h"
+
 /* Include the actual editor definitions */
 typedef enum {
   EditorState_Running,
   EditorState_CollectingCommand,
   EditorState_ProcessingCommand,
   EditorState_EditMode,
+  EditorState_FileManager,
+  EditorState_SearchInputForward,   // / - search forward
+  EditorState_SearchInputBackward,  // ? - search backward
   EditorState_Exiting,
 } EditorState;
 
@@ -77,6 +83,7 @@ typedef struct {
   Buffer* current_buffer;
   Buffer** buffers;
   size_t number_of_buffers;
+  size_t current_buffer_index;  // Index of current buffer in buffers array
   bool end_line_mode;
   char* status_bar;
   char key_sequence[32];
@@ -88,6 +95,10 @@ typedef struct {
   bool multiline_comment_ongoing;
   int key;
   void* toolbar;  // Widget-based bottom toolbar (opaque pointer for tests)
+  void* file_manager;  // File manager sidebar (opaque pointer for tests)
+  int editor_offset_x;  // X offset for editor content (for sidebar)
+  SearchState search;   // Search state for / and ? commands
+  Command search_buffer; // Buffer for search pattern input
 } Editor;
 
 /* Function declarations from editor.c that we need to test */
@@ -108,7 +119,9 @@ static void setup_editor(Editor* editor) {
   editor->window.height = 24;
   editor->number_of_line_digits = 4;
   editor->cursor.x = editor->number_of_line_digits;
-  editor->cursor.y = 1;
+  editor->cursor.y = 2;  // EDITOR_TOP_BAR_HEIGHT
+  editor->file_manager = NULL;
+  editor->editor_offset_x = 0;
 }
 
 void test_editor_init_state(void) {
@@ -187,6 +200,7 @@ void test_editor_state_transition_to_edit(void) {
 void test_editor_state_transition_to_exit(void) {
   Editor editor;
   setup_editor(&editor);
+  editor_init(&editor);
   editor_create_new_file(&editor);
 
   // Enter command mode and type 'q'
@@ -283,12 +297,247 @@ void test_editor_cursor_initial_position(void) {
   editor.cursor.y = 0;
   editor.number_of_line_digits = 4;
 
-  // Simulate editor home cursor
+  // Simulate editor home cursor (y starts at EDITOR_TOP_BAR_HEIGHT = 2)
   editor.cursor.x = editor.number_of_line_digits;
-  editor.cursor.y = 1;
+  editor.cursor.y = 2;
 
   TEST_CHECK(editor.cursor.x == 4);
-  TEST_CHECK(editor.cursor.y == 1);
+  TEST_CHECK(editor.cursor.y == 2);
+}
+
+/* Buffer/Tab Management Tests */
+
+void test_editor_buffer_index_tracking(void) {
+  Editor editor;
+  setup_editor(&editor);
+
+  TEST_CHECK(editor.current_buffer_index == 0);
+
+  editor_create_new_file(&editor);
+  TEST_CHECK(editor.current_buffer_index == 0);
+  TEST_CHECK(editor.number_of_buffers == 1);
+
+  editor_create_new_file(&editor);
+  TEST_CHECK(editor.current_buffer_index == 0);  // Still at first buffer
+  TEST_CHECK(editor.number_of_buffers == 2);
+
+  editor_deinit(&editor);
+}
+
+void test_editor_switch_to_next_buffer(void) {
+  Editor editor;
+  setup_editor(&editor);
+
+  editor_create_new_file(&editor);
+  editor_create_new_file(&editor);
+  editor_create_new_file(&editor);
+
+  TEST_CHECK(editor.number_of_buffers == 3);
+  TEST_CHECK(editor.current_buffer_index == 0);
+
+  // Use gt to switch to next buffer
+  editor_process_key(&editor, 'g');
+  editor_process_key(&editor, 't');
+
+  TEST_CHECK(editor.current_buffer_index == 1);
+  TEST_CHECK(editor.current_buffer == editor.buffers[1]);
+
+  // Switch again
+  editor_process_key(&editor, 'g');
+  editor_process_key(&editor, 't');
+
+  TEST_CHECK(editor.current_buffer_index == 2);
+
+  editor_deinit(&editor);
+}
+
+void test_editor_switch_to_prev_buffer(void) {
+  Editor editor;
+  setup_editor(&editor);
+
+  editor_create_new_file(&editor);
+  editor_create_new_file(&editor);
+  editor_create_new_file(&editor);
+
+  // Move to buffer 2
+  editor_process_key(&editor, 'g');
+  editor_process_key(&editor, 't');
+  editor_process_key(&editor, 'g');
+  editor_process_key(&editor, 't');
+  TEST_CHECK(editor.current_buffer_index == 2);
+
+  // Use gT to switch to previous buffer
+  editor_process_key(&editor, 'g');
+  editor_process_key(&editor, 'T');
+
+  TEST_CHECK(editor.current_buffer_index == 1);
+  TEST_CHECK(editor.current_buffer == editor.buffers[1]);
+
+  editor_deinit(&editor);
+}
+
+void test_editor_buffer_switch_wrap_around(void) {
+  Editor editor;
+  setup_editor(&editor);
+
+  editor_create_new_file(&editor);
+  editor_create_new_file(&editor);
+
+  TEST_CHECK(editor.current_buffer_index == 0);
+
+  // Move to buffer 1
+  editor_process_key(&editor, 'g');
+  editor_process_key(&editor, 't');
+  TEST_CHECK(editor.current_buffer_index == 1);
+
+  // gt should wrap around to buffer 0
+  editor_process_key(&editor, 'g');
+  editor_process_key(&editor, 't');
+  TEST_CHECK(editor.current_buffer_index == 0);
+
+  // gT should wrap around to last buffer (1)
+  editor_process_key(&editor, 'g');
+  editor_process_key(&editor, 'T');
+  TEST_CHECK(editor.current_buffer_index == 1);
+
+  editor_deinit(&editor);
+}
+
+void test_editor_switch_to_buffer_by_index(void) {
+  Editor editor;
+  setup_editor(&editor);
+
+  editor_create_new_file(&editor);
+  editor_create_new_file(&editor);
+  editor_create_new_file(&editor);
+
+  TEST_CHECK(editor.current_buffer_index == 0);
+
+  // Use 2gt to switch to buffer 1 (vim-style: 2 means index 1, 0-indexed)
+  editor_process_key(&editor, '2');
+  editor_process_key(&editor, 'g');
+  editor_process_key(&editor, 't');
+
+  TEST_CHECK(editor.current_buffer_index == 1);
+  TEST_CHECK(editor.current_buffer == editor.buffers[1]);
+
+  // Use 3gt to switch to buffer 2 (last buffer)
+  editor_process_key(&editor, '3');
+  editor_process_key(&editor, 'g');
+  editor_process_key(&editor, 't');
+
+  TEST_CHECK(editor.current_buffer_index == 2);
+  TEST_CHECK(editor.current_buffer == editor.buffers[2]);
+
+  editor_deinit(&editor);
+}
+
+void test_editor_close_current_buffer(void) {
+  Editor editor;
+  setup_editor(&editor);
+
+  editor_create_new_file(&editor);
+  editor_create_new_file(&editor);
+  editor_create_new_file(&editor);
+
+  TEST_CHECK(editor.number_of_buffers == 3);
+
+  // Move to buffer 1
+  editor_process_key(&editor, 'g');
+  editor_process_key(&editor, 't');
+  TEST_CHECK(editor.current_buffer_index == 1);
+
+  // Close buffer 1 using :bd
+  editor_process_key(&editor, ':');
+  editor_process_key(&editor, 'b');
+  editor_process_key(&editor, 'd');
+  editor_process_key(&editor, '\n');
+
+  TEST_CHECK(editor.number_of_buffers == 2);
+  TEST_CHECK(editor.current_buffer_index == 0);  // Should switch to previous
+
+  editor_deinit(&editor);
+}
+
+void test_editor_cannot_close_last_buffer(void) {
+  Editor editor;
+  setup_editor(&editor);
+
+  editor_create_new_file(&editor);
+  TEST_CHECK(editor.number_of_buffers == 1);
+
+  // Try to close the only buffer
+  editor_process_key(&editor, ':');
+  editor_process_key(&editor, 'b');
+  editor_process_key(&editor, 'd');
+  editor_process_key(&editor, '\n');
+
+  // Should still have 1 buffer
+  TEST_CHECK(editor.number_of_buffers == 1);
+
+  editor_deinit(&editor);
+}
+
+void test_editor_buffer_command_bn(void) {
+  Editor editor;
+  setup_editor(&editor);
+
+  editor_create_new_file(&editor);
+  editor_create_new_file(&editor);
+  TEST_CHECK(editor.current_buffer_index == 0);
+
+  // Use :bn to go to next buffer
+  editor_process_key(&editor, ':');
+  editor_process_key(&editor, 'b');
+  editor_process_key(&editor, 'n');
+  editor_process_key(&editor, '\n');
+
+  TEST_CHECK(editor.current_buffer_index == 1);
+
+  editor_deinit(&editor);
+}
+
+void test_editor_buffer_command_bp(void) {
+  Editor editor;
+  setup_editor(&editor);
+
+  editor_create_new_file(&editor);
+  editor_create_new_file(&editor);
+
+  // Move to buffer 1
+  editor_process_key(&editor, 'g');
+  editor_process_key(&editor, 't');
+  TEST_CHECK(editor.current_buffer_index == 1);
+
+  // Use :bp to go to previous buffer
+  editor_process_key(&editor, ':');
+  editor_process_key(&editor, 'b');
+  editor_process_key(&editor, 'p');
+  editor_process_key(&editor, '\n');
+
+  TEST_CHECK(editor.current_buffer_index == 0);
+
+  editor_deinit(&editor);
+}
+
+void test_editor_buffer_command_bN(void) {
+  Editor editor;
+  setup_editor(&editor);
+
+  editor_create_new_file(&editor);
+  editor_create_new_file(&editor);
+  editor_create_new_file(&editor);
+  TEST_CHECK(editor.current_buffer_index == 0);
+
+  // Use :b2 to go to buffer 2 (1-indexed)
+  editor_process_key(&editor, ':');
+  editor_process_key(&editor, 'b');
+  editor_process_key(&editor, '2');
+  editor_process_key(&editor, '\n');
+
+  TEST_CHECK(editor.current_buffer_index == 1);
+
+  editor_deinit(&editor);
 }
 
 TEST_LIST = {
@@ -303,6 +552,16 @@ TEST_LIST = {
     {"test_editor_deinit_cleanup", test_editor_deinit_cleanup},
     {"test_editor_key_sequence_numeric", test_editor_key_sequence_numeric},
     {"test_editor_cursor_initial_position", test_editor_cursor_initial_position},
+    {"test_editor_buffer_index_tracking", test_editor_buffer_index_tracking},
+    {"test_editor_switch_to_next_buffer", test_editor_switch_to_next_buffer},
+    {"test_editor_switch_to_prev_buffer", test_editor_switch_to_prev_buffer},
+    {"test_editor_buffer_switch_wrap_around", test_editor_buffer_switch_wrap_around},
+    {"test_editor_switch_to_buffer_by_index", test_editor_switch_to_buffer_by_index},
+    {"test_editor_close_current_buffer", test_editor_close_current_buffer},
+    {"test_editor_cannot_close_last_buffer", test_editor_cannot_close_last_buffer},
+    {"test_editor_buffer_command_bn", test_editor_buffer_command_bn},
+    {"test_editor_buffer_command_bp", test_editor_buffer_command_bp},
+    {"test_editor_buffer_command_bN", test_editor_buffer_command_bN},
 
     {NULL, NULL}
 };

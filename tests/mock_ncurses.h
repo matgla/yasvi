@@ -43,6 +43,7 @@ typedef chtype attr_t;
 #define A_BOLD 1
 #define A_ITALIC 2
 #define A_DIM 4
+#define A_REVERSE 8
 
 /* Color pair macro */
 #define COLOR_PAIR(n) ((n) << 8)
@@ -91,6 +92,9 @@ int getmaxx(WINDOW* win);
 /* Mock color initialization */
 int start_color(void);
 int init_pair(short pair, short f, short b);
+
+/* ACS characters */
+#define ACS_VLINE '|'
 
 /* mvprintw */
 int mvprintw(int y, int x, const char* fmt, ...);
