@@ -1,5 +1,5 @@
 CC ?= armv8m-tcc
-CFLAGS = -Wall -Wextra -g 
+CFLAGS = -Wall -Wextra $(ROOTFS_DEBUG_CFLAGS)
 LDFLAGS = 
 SRCS = $(wildcard *.c) $(wildcard filetypes/*.c)
 OBJS = $(patsubst %.c, build/%.o, $(SRCS))
