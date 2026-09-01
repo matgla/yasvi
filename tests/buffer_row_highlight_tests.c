@@ -571,6 +571,150 @@ void test_highlight_string_continuation(void) {
   buffer_free(buffer);
 }
 
+/* Re-highlighting after edits (highlighting used to be computed only on load) */
+
+void test_highlight_reapplied_after_insert_char(void) {
+  Buffer* buffer = buffer_alloc();
+  buffer_append_line(buffer, "nt x;");
+  BufferRow* row = buffer_get_row(buffer, 0);
+
+  /* Typing the leading 'i' turns "nt" into the type "int" */
+  buffer_row_insert_char(row, 0, 'i');
+
+  TEST_CHECK(row->highlight_data[0] == (char)EHighlightToken_Type);
+  TEST_CHECK(row->highlight_data[1] == (char)EHighlightToken_Type);
+  TEST_CHECK(row->highlight_data[2] == (char)EHighlightToken_Type);
+  TEST_CHECK(row->highlight_data[3] == (char)EHighlightToken_Normal);
+
+  buffer_free(buffer);
+}
+
+void test_highlight_reapplied_after_remove_char(void) {
+  Buffer* buffer = buffer_alloc();
+  buffer_append_line(buffer, "uint x;");
+  BufferRow* row = buffer_get_row(buffer, 0);
+
+  /* Deleting the 'u' leaves the type "int" */
+  TEST_CHECK(buffer_row_remove_char(row, 0));
+
+  TEST_CHECK(row->highlight_data[0] == (char)EHighlightToken_Type);
+  TEST_CHECK(row->highlight_data[1] == (char)EHighlightToken_Type);
+  TEST_CHECK(row->highlight_data[2] == (char)EHighlightToken_Type);
+  TEST_CHECK(row->highlight_data[3] == (char)EHighlightToken_Normal);
+
+  buffer_free(buffer);
+}
+
+void test_highlight_reapplied_after_append_str(void) {
+  Buffer* buffer = buffer_alloc();
+  buffer_append_line(buffer, "int x;");
+  BufferRow* row = buffer_get_row(buffer, 0);
+
+  buffer_row_append_str(row, " return 42;", 11);
+
+  /* "return" is a keyword and "42" a number, both typed after the load */
+  for (int i = 7; i < 13; ++i) {
+    TEST_CHECK(row->highlight_data[i] == (char)EHighlightToken_Keyword);
+  }
+  TEST_CHECK(row->highlight_data[14] == (char)EHighlightToken_Digit);
+  TEST_CHECK(row->highlight_data[15] == (char)EHighlightToken_Digit);
+
+  buffer_free(buffer);
+}
+
+void test_highlight_reapplied_after_replace_line(void) {
+  Buffer* buffer = buffer_alloc();
+  buffer_append_line(buffer, "int x;");
+  BufferRow* row = buffer_get_row(buffer, 0);
+
+  buffer_row_replace_line(row, "// comment");
+
+  for (int i = 0; i < row->len; ++i) {
+    TEST_CHECK(row->highlight_data[i] == (char)EHighlightToken_Comment);
+  }
+
+  buffer_free(buffer);
+}
+
+void test_highlight_opened_comment_cascades_to_rows_below(void) {
+  Buffer* buffer = buffer_alloc();
+  buffer_append_line(buffer, "int x;");
+  buffer_append_line(buffer, "int y;");
+  buffer_append_line(buffer, "int z;");
+  BufferRow* first = buffer_get_row(buffer, 0);
+  BufferRow* second = buffer_get_row(buffer, 1);
+  BufferRow* third = buffer_get_row(buffer, 2);
+
+  /* Opening a block comment on the first row comments out everything below */
+  buffer_row_replace_line(first, "/* open");
+
+  TEST_CHECK(first->highlight_comment_open == 1);
+  TEST_CHECK(second->highlight_data[0] == (char)EHighlightToken_Comment);
+  TEST_CHECK(second->dirty == true);
+  TEST_CHECK(third->highlight_data[0] == (char)EHighlightToken_Comment);
+  TEST_CHECK(third->dirty == true);
+
+  buffer_free(buffer);
+}
+
+void test_highlight_closed_comment_cascades_to_rows_below(void) {
+  Buffer* buffer = buffer_alloc();
+  buffer_append_line(buffer, "/* open");
+  buffer_append_line(buffer, "int y;");
+  buffer_append_line(buffer, "int z;");
+  BufferRow* first = buffer_get_row(buffer, 0);
+  BufferRow* second = buffer_get_row(buffer, 1);
+  BufferRow* third = buffer_get_row(buffer, 2);
+
+  TEST_CHECK(second->highlight_data[0] == (char)EHighlightToken_Comment);
+
+  /* Closing the comment restores normal highlighting below */
+  buffer_row_replace_line(first, "/* closed */");
+
+  TEST_CHECK(first->highlight_comment_open == 0);
+  TEST_CHECK(second->highlight_data[0] == (char)EHighlightToken_Type);
+  TEST_CHECK(third->highlight_data[0] == (char)EHighlightToken_Type);
+
+  buffer_free(buffer);
+}
+
+void test_highlight_new_line_inherits_comment_state(void) {
+  Buffer* buffer = buffer_alloc();
+  buffer_append_line(buffer, "/* open");
+  buffer_append_line(buffer, "still comment");
+  buffer->current_row = buffer_get_row(buffer, 0);
+
+  /* Pressing enter at the end of the first line adds a row inside the comment */
+  buffer_break_current_line(buffer, buffer_get_row(buffer, 0)->len);
+
+  BufferRow* inserted = buffer_get_row(buffer, 1);
+  TEST_CHECK(inserted->highlight_comment_open == 1);
+
+  BufferRow* last = buffer_get_row(buffer, 2);
+  TEST_CHECK(last->highlight_data[0] == (char)EHighlightToken_Comment);
+
+  buffer_free(buffer);
+}
+
+void test_highlight_removed_row_cascades_to_rows_below(void) {
+  Buffer* buffer = buffer_alloc();
+  buffer_append_line(buffer, "/* open");
+  buffer_append_line(buffer, "close */");
+  buffer_append_line(buffer, "int z;");
+  BufferRow* second = buffer_get_row(buffer, 1);
+
+  TEST_CHECK(buffer_get_row(buffer, 2)->highlight_data[0] ==
+             (char)EHighlightToken_Type);
+
+  /* Deleting the line that closed the comment leaves the rest commented out */
+  buffer_remove_row(buffer, second);
+
+  TEST_CHECK(buffer_get_row(buffer, 1)->highlight_data[0] ==
+             (char)EHighlightToken_Comment);
+
+  buffer_free(buffer);
+}
+
 TEST_LIST = {
     /* Keywords */
     {"test_highlight_keywords_if", test_highlight_keywords_if},
@@ -616,6 +760,23 @@ TEST_LIST = {
     /* String continuation */
     {"test_highlight_string_sets_open_flag", test_highlight_string_sets_open_flag},
     {"test_highlight_string_continuation", test_highlight_string_continuation},
+    /* Re-highlighting after edits */
+    {"test_highlight_reapplied_after_insert_char",
+     test_highlight_reapplied_after_insert_char},
+    {"test_highlight_reapplied_after_remove_char",
+     test_highlight_reapplied_after_remove_char},
+    {"test_highlight_reapplied_after_append_str",
+     test_highlight_reapplied_after_append_str},
+    {"test_highlight_reapplied_after_replace_line",
+     test_highlight_reapplied_after_replace_line},
+    {"test_highlight_opened_comment_cascades_to_rows_below",
+     test_highlight_opened_comment_cascades_to_rows_below},
+    {"test_highlight_closed_comment_cascades_to_rows_below",
+     test_highlight_closed_comment_cascades_to_rows_below},
+    {"test_highlight_new_line_inherits_comment_state",
+     test_highlight_new_line_inherits_comment_state},
+    {"test_highlight_removed_row_cascades_to_rows_below",
+     test_highlight_removed_row_cascades_to_rows_below},
 
     {NULL, NULL} /* zeroed record marking the end of the list */
 };

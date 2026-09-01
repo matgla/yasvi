@@ -41,7 +41,8 @@ TEST_NAMES = buffer_tests command_tests \
              file_manager_integration_tests \
              buffer_tab_integration_tests \
              search_tests \
-             search_cycle_tests
+             search_cycle_tests \
+             toolbar_layout_tests
 
 TEST_BINS = $(patsubst %,build/%,$(TEST_NAMES))
 
@@ -114,6 +115,9 @@ build/search_tests: search_tests.c $(SUT_SRCS) acutest.h | build
 
 build/search_cycle_tests: search_cycle_tests.c $(SUT_SRCS) acutest.h | build
 	$(CC) $(CFLAGS) -o $@ search_cycle_tests.c $(SUT_SRCS) $(LDFLAGS)
+
+build/toolbar_layout_tests: toolbar_layout_tests.c $(SUT_SRCS) $(MOCK_SRCS) $(TOOLBAR_SRCS) $(FM_SRCS) ../editor.c ../window.c acutest.h mock_ncurses.h | build
+	$(CC) $(EDITOR_TEST_CFLAGS) -o $@ toolbar_layout_tests.c $(SUT_SRCS) $(MOCK_SRCS) $(TOOLBAR_SRCS) $(FM_SRCS) ../editor.c ../window.c $(LDFLAGS)
 
 run: $(TEST_BINS)
 	@for test in $(TEST_NAMES); do \

@@ -31,6 +31,7 @@ Widget* widget_create(const char* name, WidgetPosition position, int priority,
   widget->name = name;
   widget->position = position;
   widget->priority = priority;
+  widget->row = 0;
   widget->visibility = visibility;
   widget->visible = (visibility != WidgetVisibility_OnDemand);
   widget->cached_width = 0;

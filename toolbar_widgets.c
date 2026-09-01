@@ -101,6 +101,9 @@ static void get_ascii_representation(int key, char* out, size_t out_size) {
 // Mode Widget
 // ============================================================================
 
+// Wide enough for the longest mode text, "-- COMMAND --" / "-- FILEMGR --".
+#define MODE_FIELD_WIDTH 13
+
 typedef struct {
   char mode_text[16];
   EditorState last_state;
@@ -167,9 +170,12 @@ static int mode_draw(const Widget* widget, struct Toolbar* toolbar, int x, int y
 }
 
 static int mode_get_min_width(const Widget* widget) {
-  const ModeWidgetData* data = (const ModeWidgetData*)widget->data;
-  int len = strlen(data->mode_text);
-  return len > 0 ? len : 13;  // 13 = strlen("-- FILEMGR --")
+  (void)widget;
+  // A fixed slot, not the width of the current mode text. The widths differ
+  // ("-- NORMAL --" is 12, "-- COMMAND --" 13), and since the filename is laid
+  // out after this widget, a content-sized field would slide the filename one
+  // column sideways every time the mode changed.
+  return MODE_FIELD_WIDTH;
 }
 
 static const WidgetVTable mode_vtable = {
@@ -273,12 +279,40 @@ Widget* widget_filename_create(void) {
 // Position Widget
 // ============================================================================
 
+// The cursor column gets a slot this wide; the line number and the line count
+// share one sized from the file, so the readout only grows when the file
+// crosses a power of ten rather than on every keystroke.
+#define POSITION_COLUMN_DIGITS 3
+#define POSITION_MIN_LINE_DIGITS 3
+
 typedef struct {
   int line;
   int column;
   int total_lines;
   bool valid;
 } PositionWidgetData;
+
+static int position_line_digits(const PositionWidgetData* data) {
+  int digits = 1;
+  int value = data->total_lines;
+  while (value >= 10) {
+    value /= 10;
+    ++digits;
+  }
+  return digits < POSITION_MIN_LINE_DIGITS ? POSITION_MIN_LINE_DIGITS : digits;
+}
+
+// Every number sits in a slot of its own, so ':' and '/' stay in the same
+// column as the cursor moves. This widget is right-aligned, so a readout sized
+// to its content would slide its whole text sideways whenever the line number
+// gained or lost a digit.
+static int position_format(const PositionWidgetData* data, char* out,
+                           size_t size) {
+  const int digits = position_line_digits(data);
+  return snprintf(out, size, "%*d:%-*d/%-*d", digits, data->line,
+                  POSITION_COLUMN_DIGITS, data->column, digits,
+                  data->total_lines);
+}
 
 static bool position_init(Widget* widget, struct Toolbar* toolbar) {
   (void)toolbar;
@@ -323,8 +357,7 @@ static int position_draw(const Widget* widget, struct Toolbar* toolbar, int x,
   const PositionWidgetData* data = (const PositionWidgetData*)widget->data;
 
   char display[64];
-  int len =
-      snprintf(display, sizeof(display), "%d:%d/%d", data->line, data->column, data->total_lines);
+  int len = position_format(data, display, sizeof(display));
   if (len > max_width) len = max_width;
 
   attrset(COLOR_OTHER);
@@ -335,10 +368,8 @@ static int position_draw(const Widget* widget, struct Toolbar* toolbar, int x,
 static int position_get_min_width(const Widget* widget) {
   const PositionWidgetData* data = (const PositionWidgetData*)widget->data;
   if (!data->valid) return 12;  // "9999:99/9999"
-  // Return actual width based on content
   char display[64];
-  int len = snprintf(display, sizeof(display), "%d:%d/%d", 
-                     data->line, data->column, data->total_lines);
+  int len = position_format(data, display, sizeof(display));
   return len > 0 ? len : 12;
 }
 
@@ -451,6 +482,7 @@ Widget* widget_command_create(void) {
 
   Widget* w = widget_create("command", WidgetPosition_Left, 10,
                             WidgetVisibility_OnDemand, &command_vtable, data);
+  w->row = 1;          // Command line, below the main toolbar row
   w->visible = false;  // Hidden by default
   return w;
 }
@@ -537,6 +569,7 @@ Widget* widget_message_create(void) {
 
   Widget* w = widget_create("message", WidgetPosition_Center, 1,
                             WidgetVisibility_OnDemand, &message_vtable, data);
+  w->row = 1;          // Command line, below the main toolbar row
   w->visible = false;  // Hidden by default
   return w;
 }
@@ -544,6 +577,10 @@ Widget* widget_message_create(void) {
 // ============================================================================
 // Key Sequence Widget
 // ============================================================================
+
+// The corner slot a pending key sequence is shown in, kept reserved whether or
+// not there is one to show.
+#define KEYSEQ_FIELD_WIDTH 5
 
 typedef struct {
   char sequence[32];
@@ -566,12 +603,14 @@ static WidgetUpdateResult keyseq_update(Widget* widget, struct Toolbar* toolbar,
   (void)toolbar;
   KeyseqWidgetData* data = (KeyseqWidgetData*)widget->data;
 
+  // The widget stays visible even with nothing to show: it sits in the bottom
+  // right corner, and letting it appear and disappear would shove the position
+  // readout sideways every time a multi-key command was half typed.
   if (editor->key_sequence[0] == '\0') {
     if (data->sequence[0] == '\0') {
       return WidgetUpdate_NoChange;
     }
     data->sequence[0] = '\0';
-    widget->visible = false;
     return WidgetUpdate_Redraw;
   }
 
@@ -581,7 +620,6 @@ static WidgetUpdateResult keyseq_update(Widget* widget, struct Toolbar* toolbar,
 
   strncpy(data->sequence, editor->key_sequence, sizeof(data->sequence) - 1);
   data->sequence[sizeof(data->sequence) - 1] = '\0';
-  widget->visible = true;
   return WidgetUpdate_Redraw;
 }
 
@@ -601,8 +639,8 @@ static int keyseq_draw(const Widget* widget, struct Toolbar* toolbar, int x, int
 
 static int keyseq_get_min_width(const Widget* widget) {
   const KeyseqWidgetData* data = (const KeyseqWidgetData*)widget->data;
-  int len = strlen(data->sequence);
-  return len > 0 ? len : 5;  // Minimum space for potential sequence
+  const int len = (int)strlen(data->sequence);
+  return len > KEYSEQ_FIELD_WIDTH ? len : KEYSEQ_FIELD_WIDTH;
 }
 
 static const WidgetVTable keyseq_vtable = {
@@ -618,10 +656,8 @@ Widget* widget_keyseq_create(void) {
   KeyseqWidgetData* data = malloc(sizeof(KeyseqWidgetData));
   if (!data) return NULL;
 
-  Widget* w = widget_create("keyseq", WidgetPosition_Right, 5, WidgetVisibility_Always,
-                            &keyseq_vtable, data);
-  w->visible = false;  // Hidden when empty
-  return w;
+  return widget_create("keyseq", WidgetPosition_Right, 5,
+                       WidgetVisibility_Always, &keyseq_vtable, data);
 }
 
 // ============================================================================

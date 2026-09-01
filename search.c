@@ -406,8 +406,8 @@ static int replace_in_row(BufferRow* row,
   row->len = new_len;
   row->dirty = true;
 
-  // Re-highlight the row
-  buffer_row_highlight_line(row);
+  // Re-highlight the row (and the rows below if the multiline state changed)
+  buffer_row_rehighlight(row);
 
   return match_pos + (int)replacement_len;
 }

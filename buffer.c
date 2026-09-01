@@ -87,6 +87,8 @@ static void buffer_insert_below_current(Buffer* buffer) {
   }
   current->next = new_row;
   buffer->number_of_rows++;
+
+  buffer_row_rehighlight(new_row);
 }
 
 Buffer* buffer_alloc() {
@@ -274,10 +276,14 @@ void buffer_remove_row(Buffer* buffer, BufferRow* row) {
     buffer->tail = row->prev;  // Remove tail
   }
 
+  BufferRow* below = row->next;
+
   free(row->data);
   free(row->highlight_data);
   free(row);
   buffer->number_of_rows--;
+
+  buffer_row_rehighlight(below);
 }
 
 int buffer_remove_current_row(Buffer* buffer) {

@@ -46,6 +46,25 @@ void buffer_row_highlight_line(BufferRow* row) {
   buffer_row_highlight_with_filetype(row, row->filetype);
 }
 
+// Re-highlight a modified row and, when its trailing multiline state (open
+// block comment / open string) changed, every row below that inherits it.
+void buffer_row_rehighlight(BufferRow* row) {
+  while (row != NULL) {
+    const int comment_open = row->highlight_comment_open;
+    const int string_open = row->highlight_string_open;
+
+    buffer_row_highlight_line(row);
+
+    if (row->highlight_comment_open == comment_open &&
+        row->highlight_string_open == string_open) {
+      // State leaving this row is unchanged, rows below keep their tokens
+      return;
+    }
+
+    row = row->next;
+  }
+}
+
 int buffer_row_get_offset_to_first_char(const BufferRow* row, int start_index) {
   if (row == NULL || start_index < 0 || start_index >= row->len) {
     return 0;  // Invalid buffer or start index
@@ -214,6 +233,7 @@ void buffer_row_replace_line(BufferRow* row, const char* new_line) {
     row->data[row->len] = '\0';  // Null-terminate the string
   }
   row->dirty = true;
+  buffer_row_rehighlight(row);
 }
 
 bool buffer_row_remove_char(BufferRow* row, int index) {
@@ -229,6 +249,7 @@ bool buffer_row_remove_char(BufferRow* row, int index) {
   row->data[row->len] = '\0';       // Null-terminate the string
   row->data[row->allocated_size - 1] = '\0';  // Ensure null termination
   row->dirty = true;
+  buffer_row_rehighlight(row);
   return true;  // Character removed successfully
 }
 
@@ -250,6 +271,7 @@ int buffer_row_remove_chars(BufferRow* row, int index, int number) {
   row->len -= chars_to_remove;
   row->data[row->len] = '\0';
   row->dirty = true;
+  buffer_row_rehighlight(row);
 
   return chars_to_remove;
 }
@@ -275,6 +297,7 @@ void buffer_row_insert_char(BufferRow* row, int index, char c) {
   row->len++;
   row->data[row->len] = '\0';
   row->dirty = true;
+  buffer_row_rehighlight(row);
 }
 
 void buffer_row_insert_chars(BufferRow* row,
@@ -306,6 +329,7 @@ void buffer_row_insert_chars(BufferRow* row,
   row->len += number;
   row->data[row->len] = '\0';
   row->dirty = true;
+  buffer_row_rehighlight(row);
 }
 
 void buffer_row_trim(BufferRow* row, int start_index) {
@@ -317,6 +341,7 @@ void buffer_row_trim(BufferRow* row, int start_index) {
   row->len = start_index;
   row->data[row->len] = '\0';
   row->dirty = true;
+  buffer_row_rehighlight(row);
 }
 
 void buffer_row_append_char(BufferRow* row, char c) {
@@ -335,6 +360,7 @@ void buffer_row_append_char(BufferRow* row, char c) {
   row->len++;
   row->data[row->len] = '\0';
   row->dirty = true;
+  buffer_row_rehighlight(row);
 }
 
 void buffer_row_append_str(BufferRow* row, const char* str, int number) {
@@ -357,6 +383,7 @@ void buffer_row_append_str(BufferRow* row, const char* str, int number) {
   row->len += number;
   row->data[row->len] = '\0';
   row->dirty = true;
+  buffer_row_rehighlight(row);
 }
 
 void buffer_row_break_line(BufferRow* row, int index) {
@@ -397,6 +424,10 @@ void buffer_row_break_line(BufferRow* row, int index) {
     row->next->prev = new_row;
   }
   row->next = new_row;
+
+  // new_row's tokens are uninitialised, so highlight both rows unconditionally
+  buffer_row_highlight_line(row);
+  buffer_row_rehighlight(new_row);
 }
 
 BufferRow* buffer_row_get_next(const BufferRow* row) {

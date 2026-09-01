@@ -64,3 +64,6 @@ void buffer_row_set_highlight(BufferRow* row,
                               int column_end,
                               EHighlightToken token);
 void buffer_row_highlight_line(BufferRow* row);
+// Re-highlight a modified row and cascade to the rows below when the trailing
+// multiline state (open block comment / open string) changed.
+void buffer_row_rehighlight(BufferRow* row);

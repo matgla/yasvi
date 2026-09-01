@@ -23,9 +23,15 @@
 
 void command_init(Command* command) {
   command->buffer = malloc(COMMAND_BUFFER_DEFAULT_SIZE);
+  command->buffer_size = 0;
+  command->cursor_position = 0;
+  if (command->buffer == NULL) {
+    // Leave the command empty rather than dereferencing NULL. Callers already
+    // treat a NULL buffer as "this command never got recorded".
+    return;
+  }
   command->buffer[0] = '\0';
   command->buffer_size = COMMAND_BUFFER_DEFAULT_SIZE;
-  command->cursor_position = 0;
 }
 
 void command_deinit(Command* command) {
@@ -36,9 +42,20 @@ void command_deinit(Command* command) {
 }
 
 void command_append(Command* command, char ch) {
+  if (command->buffer == NULL) {
+    return;  // allocation already failed; keep the command empty
+  }
+
   if (command->cursor_position == command->buffer_size - 1) {
-    command->buffer_size <<= 1;
-    command->buffer = realloc(command->buffer, command->buffer_size);
+    // Keep the old buffer on failure instead of leaking it through a NULL
+    // realloc result; the character is dropped, the command stays readable.
+    size_t new_size = command->buffer_size << 1;
+    char* grown = realloc(command->buffer, new_size);
+    if (grown == NULL) {
+      return;
+    }
+    command->buffer = grown;
+    command->buffer_size = new_size;
   }
 
   command->buffer[command->cursor_position++] = ch;

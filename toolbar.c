@@ -30,14 +30,31 @@ typedef struct {
   int center_min_width;
 } LayoutMetrics;
 
-// Calculate total width needed for a widget list
-static int calculate_list_width(Widget* list) {
+// Number of content rows in the toolbar (row 0 is the separator line)
+#define TOOLBAR_CONTENT_ROWS 2
+
+static bool widget_takes_space(const Widget* w, int row) {
+  return w->row == row && w->visible && w->vtable && w->vtable->get_min_width;
+}
+
+// Next widget on the same row that will be laid out, NULL when this is the last
+static Widget* next_widget_on_row(Widget* w, int row) {
+  for (Widget* n = w->next; n != NULL; n = n->next) {
+    if (widget_takes_space(n, row)) {
+      return n;
+    }
+  }
+  return NULL;
+}
+
+// Calculate total width needed for the widgets of one row in a list
+static int calculate_list_width(Widget* list, int row) {
   int total = 0;
   for (Widget* w = list; w != NULL; w = w->next) {
-    if (w->visible && w->vtable && w->vtable->get_min_width) {
+    if (widget_takes_space(w, row)) {
       total += w->vtable->get_min_width(w);
       // Add spacing between widgets
-      if (w->next && w->next->visible) {
+      if (next_widget_on_row(w, row)) {
         total += 1;
       }
     }
@@ -172,39 +189,36 @@ void toolbar_layout(Toolbar* toolbar) {
     return;
   }
 
-  // Calculate widths
-  (void)calculate_list_width(toolbar->left_widgets);
-  (void)calculate_list_width(toolbar->right_widgets);
-  int center_width = calculate_list_width(toolbar->center_widgets);
-
-  // Position left widgets
-  int x = 0;
-  for (Widget* w = toolbar->left_widgets; w != NULL; w = w->next) {
-    if (w->visible && w->vtable && w->vtable->get_min_width) {
-      w->cached_x = x;
-      w->cached_width = w->vtable->get_min_width(w);
-      x += w->cached_width;
-      if (w->next && w->next->visible) {
-        x += 1;  // spacing
+  // Every row starts its own left/right/center flow, otherwise the command
+  // line would be pushed right by the widgets of the row above it.
+  for (int row = 0; row < TOOLBAR_CONTENT_ROWS; ++row) {
+    // Position left widgets
+    int x = 0;
+    for (Widget* w = toolbar->left_widgets; w != NULL; w = w->next) {
+      if (widget_takes_space(w, row)) {
+        w->cached_x = x;
+        w->cached_width = w->vtable->get_min_width(w);
+        x += w->cached_width;
+        if (next_widget_on_row(w, row)) {
+          x += 1;  // spacing
+        }
       }
     }
-  }
 
-  // Position right widgets (from right edge)
-  x = toolbar->width;
-  // Count visible right widgets and process in reverse
-  Widget* right_list[16];  // Max 16 right widgets
-  int right_count = 0;
-  for (Widget* w = toolbar->right_widgets; w != NULL && right_count < 16;
-       w = w->next) {
-    if (w->visible) {
-      right_list[right_count++] = w;
+    // Position right widgets (from right edge)
+    x = toolbar->width;
+    // Count visible right widgets and process in reverse
+    Widget* right_list[16];  // Max 16 right widgets
+    int right_count = 0;
+    for (Widget* w = toolbar->right_widgets; w != NULL && right_count < 16;
+         w = w->next) {
+      if (widget_takes_space(w, row)) {
+        right_list[right_count++] = w;
+      }
     }
-  }
-  // Position from right to left
-  for (int i = right_count - 1; i >= 0; i--) {
-    Widget* w = right_list[i];
-    if (w->vtable && w->vtable->get_min_width) {
+    // Position from right to left
+    for (int i = right_count - 1; i >= 0; i--) {
+      Widget* w = right_list[i];
       int width = w->vtable->get_min_width(w);
       x -= width;
       w->cached_x = x;
@@ -213,19 +227,19 @@ void toolbar_layout(Toolbar* toolbar) {
         x -= 1;  // spacing
       }
     }
-  }
 
-  // Center widgets
-  if (center_width > 0 && toolbar->center_widgets) {
-    int center_x = (toolbar->width - center_width) / 2;
-    x = center_x;
-    for (Widget* w = toolbar->center_widgets; w != NULL; w = w->next) {
-      if (w->visible && w->vtable && w->vtable->get_min_width) {
-        w->cached_x = x;
-        w->cached_width = w->vtable->get_min_width(w);
-        x += w->cached_width;
-        if (w->next && w->next->visible) {
-          x += 1;
+    // Center widgets
+    int center_width = calculate_list_width(toolbar->center_widgets, row);
+    if (center_width > 0) {
+      x = (toolbar->width - center_width) / 2;
+      for (Widget* w = toolbar->center_widgets; w != NULL; w = w->next) {
+        if (widget_takes_space(w, row)) {
+          w->cached_x = x;
+          w->cached_width = w->vtable->get_min_width(w);
+          x += w->cached_width;
+          if (next_widget_on_row(w, row)) {
+            x += 1;
+          }
         }
       }
     }
@@ -266,11 +280,8 @@ void toolbar_draw(Toolbar* toolbar, void* editor) {
       if (w->visible && w->cached_width > 0 && w->vtable && w->vtable->draw) {
         int max_width = toolbar->width - w->cached_x;
         if (max_width > 0) {
-          int row = toolbar->y_position + 1;
-          // Command and message widgets go on the bottom row
-          if (strcmp(w->name, "command") == 0 || strcmp(w->name, "message") == 0) {
-            row = toolbar->y_position + 2;
-          }
+          // Row 0 is the separator, so content rows start one line below
+          int row = toolbar->y_position + 1 + w->row;
           w->vtable->draw(w, toolbar, w->cached_x, row, max_width);
         }
       }

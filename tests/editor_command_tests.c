@@ -307,6 +307,108 @@ void test_editor_command_backspace(void) {
   editor_deinit(&editor);
 }
 
+// The terminal injects bytes nobody typed -- a NUL or control byte around
+// Enter, or a KEY_* code whose low byte is junk. None of them may reach the
+// command buffer, or ":w" arrives as an unknown command.
+void test_editor_command_ignores_non_printable_keys(void) {
+  Editor editor;
+  setup_editor(&editor);
+  editor_create_new_file(&editor);
+
+  editor_process_key(&editor, ':');
+  editor_process_key(&editor, 0);    // stray NUL
+  editor_process_key(&editor, 'w');
+  editor_process_key(&editor, 1);    // stray control byte
+  editor_process_key(&editor, KEY_UP);
+  editor_process_key(&editor, ' ');  // printable, must survive
+  editor_process_key(&editor, '/');
+  editor_process_key(&editor, 'a');
+
+  TEST_CHECK(strcmp(editor.command.buffer, "w /a") == 0);
+
+  editor_process_key(&editor, 27);  // Cancel
+  editor_deinit(&editor);
+}
+
+// Backspace on an empty command line must not underflow cursor_position and
+// write through buffer[(size_t)-1].
+void test_editor_command_backspace_on_empty(void) {
+  Editor editor;
+  setup_editor(&editor);
+  editor_create_new_file(&editor);
+
+  editor_process_key(&editor, ':');
+  editor_process_key(&editor, KEY_BACKSPACE);
+  editor_process_key(&editor, 127);
+
+  TEST_CHECK(editor.command.cursor_position == 0);
+  TEST_CHECK(strcmp(editor.command.buffer, "") == 0);
+
+  editor_process_key(&editor, 'q');
+  editor_process_key(&editor, '\n');
+  TEST_CHECK(editor.state == EditorState_Exiting);
+
+  editor_deinit(&editor);
+}
+
+// A command that failed for a real reason must keep that reason on screen. The
+// dispatcher used to overwrite it with the generic "Command not found", so a
+// save that could not open its file was indistinguishable from a typo.
+void test_editor_command_keeps_specific_error(void) {
+  Editor editor;
+  setup_editor(&editor);
+  editor_create_new_file(&editor);  // no filename attached
+
+  enter_command(&editor, "w");
+
+  TEST_CHECK(editor.state == EditorState_Running);
+  TEST_CHECK(editor.error_message != NULL);
+  if (editor.error_message) {
+    TEST_CHECK(strncmp(editor.error_message, "No filename specified for saving",
+                       32) == 0);
+    TEST_MSG("error_message: %s", editor.error_message);
+  }
+
+  editor_deinit(&editor);
+}
+
+// ...while a genuinely unknown command still gets the generic message.
+void test_editor_command_unknown_reports_not_found(void) {
+  Editor editor;
+  setup_editor(&editor);
+  editor_create_new_file(&editor);
+
+  enter_command(&editor, "xyz");
+
+  TEST_CHECK(editor.state == EditorState_Running);
+  TEST_CHECK(editor.error_message != NULL);
+  if (editor.error_message) {
+    TEST_CHECK(strncmp(editor.error_message, "Command not found", 17) == 0);
+    TEST_MSG("error_message: %s", editor.error_message);
+  }
+
+  editor_deinit(&editor);
+}
+
+// A bare ':' followed by Enter is a no-op in vi. It used to fall through to the
+// unknown-command path and report "Command not found: ''".
+void test_editor_command_empty_reports_nothing(void) {
+  Editor editor;
+  setup_editor(&editor);
+  editor_create_new_file(&editor);
+
+  editor_process_key(&editor, ':');
+  editor_process_key(&editor, '\n');
+
+  TEST_CHECK(editor.state == EditorState_Running);
+  TEST_CHECK(editor.error_message == NULL);
+  if (editor.error_message) {
+    TEST_MSG("error_message: %s", editor.error_message);
+  }
+
+  editor_deinit(&editor);
+}
+
 TEST_LIST = {
     {"test_editor_command_quit", test_editor_command_quit},
     {"test_editor_command_invalid", test_editor_command_invalid},
@@ -317,6 +419,16 @@ TEST_LIST = {
     {"test_editor_command_write_force_quit", test_editor_command_write_force_quit},
     {"test_editor_command_cancel_with_escape", test_editor_command_cancel_with_escape},
     {"test_editor_command_backspace", test_editor_command_backspace},
+    {"test_editor_command_ignores_non_printable_keys",
+     test_editor_command_ignores_non_printable_keys},
+    {"test_editor_command_backspace_on_empty",
+     test_editor_command_backspace_on_empty},
+    {"test_editor_command_keeps_specific_error",
+     test_editor_command_keeps_specific_error},
+    {"test_editor_command_unknown_reports_not_found",
+     test_editor_command_unknown_reports_not_found},
+    {"test_editor_command_empty_reports_nothing",
+     test_editor_command_empty_reports_nothing},
 
     {NULL, NULL}
 };

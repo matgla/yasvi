@@ -312,6 +312,21 @@ void test_command_empty_buffer_operations(void) {
   TEST_CHECK(command.cursor_position == 0);
 }
 
+// command_init leaves buffer NULL when malloc fails, and the editor's ':' path
+// keeps feeding keys at it. Appending must be inert, not a NULL dereference.
+void test_command_append_to_failed_allocation(void) {
+  Command command = {NULL, 0, 0};
+
+  command_append(&command, 'w');
+  command_append(&command, 'q');
+
+  TEST_CHECK(command.buffer == NULL);
+  TEST_CHECK(command.cursor_position == 0);
+  TEST_CHECK(command.buffer_size == 0);
+
+  command_deinit(&command);  // must also survive the NULL buffer
+}
+
 TEST_LIST = {
     {"test_command_init", test_command_init},
     {"test_command_append_single", test_command_append_single},
@@ -327,6 +342,8 @@ TEST_LIST = {
     {"test_command_sequence_write_quit", test_command_sequence_write_quit},
     {"test_command_sequence_write_file", test_command_sequence_write_file},
     {"test_command_empty_buffer_operations", test_command_empty_buffer_operations},
+    {"test_command_append_to_failed_allocation",
+     test_command_append_to_failed_allocation},
 
     {NULL, NULL}  // zeroed record marking the end of the list
 };

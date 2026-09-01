@@ -80,6 +80,7 @@ typedef struct Widget {
   WidgetVisibility visibility;
   WidgetPosition position;
   int priority;               // Drawing order (lower = first)
+  int row;                    // Toolbar row: 0 = main row, 1 = command line
   bool visible;
   int cached_width;           // Last drawn width
   int cached_x;               // Last drawn position

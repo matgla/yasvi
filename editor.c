@@ -39,8 +39,13 @@
 
 typedef enum {
   CommandResult_Success = 0,
-  CommandResult_CommandNotFound = 1,
   CommandResult_ShouldExit = 2,
+  // The command failed and the handler has already reported why via
+  // editor_set_error_message ("Failed to open file for writing", "Invalid
+  // substitute syntax", "Command not found", ...). Every failing path owns its
+  // own message, so the caller never has to guess one -- guessing is how a
+  // failed ':w' used to be reported as an unknown command.
+  CommandResult_Error = 3,
 } CommandResult;
 
 static void editor_move_cursor_to_end(Editor* editor);
@@ -133,6 +138,15 @@ static void editor_home_cursor_xy(Editor* editor) {
   editor_home_cursor_y(editor);
 }
 
+// Only printable ASCII can be part of a ':' command or a search pattern. The
+// terminal hands us more than the user typed -- a stray NUL or control byte
+// around Enter (miniterm does this), and KEY_* codes such as KEY_UP are > 255
+// and become junk once cast to char. Any of those silently lands in the buffer
+// and turns ":w" into an unknown command, so drop everything else here.
+static bool editor_is_printable_key(int key) {
+  return key >= 0x20 && key <= 0x7E;
+}
+
 // true if editor loop should continue
 static bool editor_collect_command(Editor* editor, int key) {
   if (key == '\n') {
@@ -144,9 +158,14 @@ static bool editor_collect_command(Editor* editor, int key) {
     editor->state = EditorState_Running;
     return true;
   } else if (key == KEY_BACKSPACE || key == 127) {
-    editor->command.cursor_position--;
-    editor->command.buffer[editor->command.cursor_position] = '\0';
+    if (editor->command.cursor_position > 0) {
+      editor->command.cursor_position--;
+      editor->command.buffer[editor->command.cursor_position] = '\0';
+    }
     return false;
+  }
+  if (!editor_is_printable_key(key)) {
+    return false;  // terminal noise, not part of the command
   }
   command_append(&editor->command, (char)key);
   return false;
@@ -221,6 +240,9 @@ static bool editor_collect_search_pattern(Editor* editor, int key) {
         '\0';
     }
     return false;
+  }
+  if (!editor_is_printable_key(key)) {
+    return false;  // terminal noise, not part of the pattern
   }
   command_append(&editor->search_buffer, (char)key);
   return false;
@@ -308,19 +330,19 @@ static CommandResult editor_process_save_command(Editor* editor) {
       should_exit = true;
     } else {
       editor_set_error_message(editor, "Invalid command syntax");
-      return CommandResult_CommandNotFound;
+      return CommandResult_Error;
     }
   }
 
   if (filename == NULL || strlen(filename) == 0) {
     editor_set_error_message(editor, "No filename specified for saving");
-    return CommandResult_CommandNotFound;
+    return CommandResult_Error;
   }
   FILE* file = fopen(filename, "w");
 
   if (file == NULL) {
     editor_set_error_message(editor, "Failed to open file for writing");
-    return CommandResult_CommandNotFound;
+    return CommandResult_Error;
   }
 
   for (BufferRow* row = buffer_get_first_row(editor->current_buffer); row != NULL;
@@ -338,7 +360,10 @@ static CommandResult editor_process_save_command(Editor* editor) {
 static CommandResult editor_process_command(Editor* editor) {
   const Command* command = &editor->command;
   if (command->buffer == NULL) {
-    return CommandResult_CommandNotFound;
+    // command_init/command_append could not get memory, so nothing the user
+    // typed was ever recorded. Say that rather than blaming the command.
+    editor_set_error_message(editor, "Out of memory");
+    return CommandResult_Error;
   }
   if (strcmp(command->buffer, "q") == 0) {
     return CommandResult_ShouldExit;
@@ -361,7 +386,7 @@ static CommandResult editor_process_command(Editor* editor) {
       return CommandResult_Success;
     }
     editor_set_error_message(editor, "Invalid buffer number");
-    return CommandResult_CommandNotFound;
+    return CommandResult_Error;
   }
 
   // Handle :bn (next buffer) and :bp (previous buffer)
@@ -380,7 +405,7 @@ static CommandResult editor_process_command(Editor* editor) {
     const char* cmd = command->buffer + 1;  // Skip 's'
     if (*cmd != '/') {
       editor_set_error_message(editor, "Invalid substitute syntax");
-      return CommandResult_CommandNotFound;
+      return CommandResult_Error;
     }
     cmd++;  // Skip first '/'
 
@@ -389,14 +414,14 @@ static CommandResult editor_process_command(Editor* editor) {
     const char* pattern_end = strchr(cmd, '/');
     if (pattern_end == NULL) {
       editor_set_error_message(editor, "Invalid substitute syntax");
-      return CommandResult_CommandNotFound;
+      return CommandResult_Error;
     }
 
     size_t pattern_len = pattern_end - pattern_start;
     char* pattern = (char*)malloc(pattern_len + 1);
     if (pattern == NULL) {
       editor_set_error_message(editor, "Memory allocation failed");
-      return CommandResult_CommandNotFound;
+      return CommandResult_Error;
     }
     strncpy(pattern, pattern_start, pattern_len);
     pattern[pattern_len] = '\0';
@@ -413,7 +438,7 @@ static CommandResult editor_process_command(Editor* editor) {
     if (replacement == NULL) {
       free(pattern);
       editor_set_error_message(editor, "Memory allocation failed");
-      return CommandResult_CommandNotFound;
+      return CommandResult_Error;
     }
     strncpy(replacement, replacement_start, replacement_len);
     replacement[replacement_len] = '\0';
@@ -453,7 +478,7 @@ static CommandResult editor_process_command(Editor* editor) {
     const char* cmd = command->buffer + 2;  // Skip '%s'
     if (*cmd != '/') {
       editor_set_error_message(editor, "Invalid substitute syntax");
-      return CommandResult_CommandNotFound;
+      return CommandResult_Error;
     }
     cmd++;  // Skip first '/'
 
@@ -462,14 +487,14 @@ static CommandResult editor_process_command(Editor* editor) {
     const char* pattern_end = strchr(cmd, '/');
     if (pattern_end == NULL) {
       editor_set_error_message(editor, "Invalid substitute syntax");
-      return CommandResult_CommandNotFound;
+      return CommandResult_Error;
     }
 
     size_t pattern_len = pattern_end - pattern_start;
     char* pattern = (char*)malloc(pattern_len + 1);
     if (pattern == NULL) {
       editor_set_error_message(editor, "Memory allocation failed");
-      return CommandResult_CommandNotFound;
+      return CommandResult_Error;
     }
     strncpy(pattern, pattern_start, pattern_len);
     pattern[pattern_len] = '\0';
@@ -486,7 +511,7 @@ static CommandResult editor_process_command(Editor* editor) {
     if (replacement == NULL) {
       free(pattern);
       editor_set_error_message(editor, "Memory allocation failed");
-      return CommandResult_CommandNotFound;
+      return CommandResult_Error;
     }
     strncpy(replacement, replacement_start, replacement_len);
     replacement[replacement_len] = '\0';
@@ -519,7 +544,12 @@ static CommandResult editor_process_command(Editor* editor) {
     return CommandResult_Success;
   }
 
-  return CommandResult_CommandNotFound;
+  if (command->buffer[0] == '\0') {
+    return CommandResult_Success;  // bare ':' -- vi does nothing
+  }
+
+  editor_set_error_message(editor, "Command not found");
+  return CommandResult_Error;
 }
 
 static void editor_set_error_message(Editor* editor, const char* message) {
@@ -1240,8 +1270,8 @@ void editor_process_key(Editor* editor, int key) {
           case CommandResult_ShouldExit: {
             editor->state = EditorState_Exiting;
           } break;
-          case CommandResult_CommandNotFound: {
-            editor_set_error_message(editor, "Command not found");
+          case CommandResult_Error: {
+            // Reason already on screen; leave it there.
             editor->state = EditorState_Running;
           } break;
           case CommandResult_Success: {
@@ -1341,8 +1371,13 @@ void editor_draw_status_bar(const Editor* editor) {
     mvaddstr(editor->window.height - 1, editor->window.width - 10,
              editor->key_sequence);
   }
+#ifdef DEBUG
+  // The last key and its code, as the toolbar's debug keystroke widget shows
+  // them in the widget path -- gated the same way, so a release build does not
+  // paint a debug readout into the status bar on every keypress.
   mvprintw(editor->window.height - 1, editor->window.width - 30, "'%c'(%d) ",
            editor->key, editor->key);
+#endif
 }
 
 void editor_redraw_screen(Editor* editor) {
