@@ -27,11 +27,16 @@ The project is licensed under GNU General Public License v3.0 (GPL-3.0).
 ├── file_manager.c/h    # File manager sidebar (NERDTree-like)
 ├── window.c/h          # ncurses window initialization and color pairs
 ├── command.c/h         # Command line handling (ex commands)
+├── tags.c/h            # ctags "tags" file lookup (Ctrl-], :tag, Ctrl-T)
+├── completion.c/h      # insert-mode word completion (Ctrl-N / Ctrl-P)
 ├── cursor.h            # Cursor position structure definition
 ├── highlight.h         # Syntax highlighting token types enum
 ├── filetypes/          # File type specific configurations
-│   ├── filetype.h      # File type detection header
-│   └── c.ft            # C language keywords and syntax rules
+│   ├── filetype.c/h    # File type registry and detection (extension, shebang)
+│   ├── c.c/h           # C highlighter (default when no filetype matches)
+│   ├── shell.c/h       # Shell highlighter
+│   ├── zig.c/h         # Zig highlighter (.zig, .zon)
+│   └── pio.c/h         # RP2040/RP2350 PIO assembly highlighter (.pio)
 ├── tests/              # Unit tests
 │   ├── acutest.h       # Single-header test framework
 │   ├── buffer_tests.c  # Buffer and buffer_row tests
@@ -199,6 +204,38 @@ When file manager sidebar is visible:
 - `Escape`: Return to normal mode
 - `Ctrl+B`: Close file manager sidebar
 
+### ctags Navigation
+
+With a `tags` file from `ctags -R` (or `ctags *.c`), `tags.c` looks it up
+and `editor.c` does the jumping:
+- `Ctrl-]`: jump to the definition of the identifier under the cursor
+- `:tag NAME` / `:ta NAME`: jump to NAME
+- `Ctrl-T` / `:pop`: return to where the last jump started (20-deep stack)
+
+The tags file is searched in the edited file's directory, then each parent,
+then the working directory. Both address forms work: `/^pattern$/` (the
+default; ctags cuts long patterns at 96 characters and drops the `$`, which
+then matches as a prefix) and line numbers (`--excmd=number`). With several
+definitions of a name, one in the current file wins, otherwise the first;
+the status bar says "tag 1 of N". The cursor lands on the name itself.
+
+### Word Completion (insert mode)
+
+`completion.c` gathers candidates for the word before the cursor; `editor.c`
+cycles them and draws the menu (8 rows, under the word or above it when the
+screen ends):
+- `Ctrl-N` / `Ctrl-P`: next / previous candidate; after the last one the word
+  as typed comes back round
+- `Ctrl-E`: put back the word as typed
+- `Ctrl-Y`: keep the candidate; any other key keeps it too and then does what
+  it always does (`Esc` leaves insert mode)
+
+Candidates, without duplicates: words of the current buffer (nearest
+following first, wrapping round), then of the other open buffers, then the
+filetype's `completion_words` (keywords and types; Zig adds its `@builtins`,
+and its `word_prefix_chars` "@" lets `@im` complete to `@import`), then names
+from the `tags` file. At most `COMPLETION_MAX_ITEMS` (256).
+
 ### Syntax Highlighting
 
 C language support with highlighting for:
@@ -208,13 +245,33 @@ C language support with highlighting for:
 - Strings and comments
 - Numbers
 
+Shell scripts (by extension or shebang) and Zig (`.zig`, `.zon`) have their
+own highlighters. Zig highlights keywords, primitive types (including any
+`iN`/`uN`), `true`/`false`/`null`/`undefined`, `@builtins` and `@"ids"`,
+`//` comments, strings and `\\` multiline string lines, and number literals
+(hex/binary/octal, `_` separators, exponents; `0..5` stays a range). Nothing
+in Zig spans lines, so its highlighter never carries state to the next row.
+
+PIO assembly (`.pio`, the syntax `apps/pioasm` reads) highlights directives
+(`.program`, `.side_set`...), instructions, their sources/destinations
+(`pins`, `x`, `osr`...) and modifiers (`side`, `block`, `rel`...), all
+case-insensitively like pioasm, plus numbers, `;`, `//` and `/* */` comments.
+A `% lang {` ... `%}` code block is highlighted by the language's own
+highlighter (`c-sdk` as C, `zig` as Zig, anything else plain). Which language
+a row starts in is carried in `HighlightContext.lang_state`, stored per row as
+`highlight_lang_state`: a filetype-private int that, like the comment/string
+state, the first row starts at 0 and `buffer_row_rehighlight` cascades on.
+
 ## Development Notes
 
 ### Adding New File Types
 
-1. Create a new `.ft` file in `filetypes/` directory
-2. Define keywords and syntax rules
-3. Update file type detection logic in `buffer_row.c`
+1. Add `filetypes/<lang>.c/h` defining a `Highlighter` and a `Filetype`
+   (extensions, optional shebangs)
+2. Declare it in `filetypes/filetype.h` and add it to `g_filetypes[]` in
+   `filetypes/filetype.c`
+3. Add the source to `SUT_SRCS` in `tests/Makefile` and write
+   `tests/<lang>_highlight_tests.c` (see `zig_highlight_tests.c`)
 
 ### Memory Management
 

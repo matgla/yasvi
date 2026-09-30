@@ -15,6 +15,8 @@
  along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
+#define _GNU_SOURCE
+
 #include "acutest.h"
 
 #include <stdio.h>
@@ -74,6 +76,14 @@ typedef enum {
   EditorState_Exiting,
 } EditorState;
 
+/* Mirrors editor.h: the tag stack sits after search_buffer. */
+#define EDITOR_TAG_STACK_DEPTH 20
+typedef struct {
+  char* filename;
+  int line;
+  int column;
+} TagStackEntry;
+
 typedef struct {
   EditorState state;
   Command command;
@@ -100,6 +110,9 @@ typedef struct {
   int editor_offset_x;
   SearchState search;
   Command search_buffer;
+  TagStackEntry tag_stack[EDITOR_TAG_STACK_DEPTH];
+  int tag_stack_size;
+  void* completion;  // struct Completion*
 } Editor;
 
 /* External functions */
@@ -107,6 +120,10 @@ void editor_process_key(Editor* editor, int key);
 bool editor_should_exit(const Editor* editor);
 void editor_deinit(Editor* editor);
 void editor_create_new_file(Editor* editor);
+void editor_load_file(Editor* editor, const char* filename);
+int editor_get_cursor_x(const Editor* editor);
+bool editor_jump_to_tag(Editor* editor, const char* name);
+bool editor_pop_tag(Editor* editor);
 
 /* Test setup */
 static void setup_editor(Editor* editor) {
@@ -409,6 +426,144 @@ void test_editor_command_empty_reports_nothing(void) {
   editor_deinit(&editor);
 }
 
+/* ---- ctags navigation --------------------------------------------------- */
+
+static char tag_dir[64];
+static char tag_prev_cwd[512];
+
+static void tag_write(const char* name, const char* content) {
+  FILE* file = fopen(name, "w");
+  TEST_ASSERT(file != NULL);
+  fputs(content, file);
+  fclose(file);
+}
+
+/* A two-file project with a tags file, and the editor on main.c. */
+static void tag_fixture_enter(Editor* editor, bool with_tags) {
+  strcpy(tag_dir, "/tmp/yasvi_tagnav_XXXXXX");
+  TEST_ASSERT(mkdtemp(tag_dir) != NULL);
+  TEST_ASSERT(getcwd(tag_prev_cwd, sizeof(tag_prev_cwd)) != NULL);
+  TEST_ASSERT(chdir(tag_dir) == 0);
+  tag_write("main.c",
+            "#include \"util.h\"\n"
+            "int main(void)\n"
+            "{\n"
+            "  return helper(1);\n"
+            "}\n");
+  tag_write("util.c",
+            "/* util */\n"
+            "\n"
+            "int helper(int x)\n"
+            "{\n"
+            "  return x;\n"
+            "}\n");
+  if (with_tags) {
+    tag_write("tags",
+              "!_TAG_FILE_SORTED\t1\t/0=unsorted, 1=sorted/\n"
+              "helper\tutil.c\t/^int helper(int x)$/;\"\tf\n"
+              "main\tmain.c\t/^int main(void)$/;\"\tf\n");
+  }
+  setup_editor(editor);
+  editor_load_file(editor, "main.c");
+}
+
+static void tag_fixture_leave(Editor* editor) {
+  editor_deinit(editor);
+  unlink("main.c");
+  unlink("util.c");
+  unlink("tags");
+  TEST_CHECK(chdir(tag_prev_cwd) == 0);
+  rmdir(tag_dir);
+}
+
+static const char* tag_current_file(const Editor* editor) {
+  return buffer_get_filename(editor->current_buffer);
+}
+
+void test_editor_tag_command_jumps_to_definition(void) {
+  Editor editor;
+  tag_fixture_enter(&editor, true);
+
+  enter_command(&editor, "tag helper");
+
+  TEST_CHECK(editor.state == EditorState_Running);
+  TEST_CHECK(strcmp(tag_current_file(&editor), "util.c") == 0);
+  TEST_CHECK(buffer_get_current_line_number(editor.current_buffer) == 3);
+  TEST_CHECK(editor_get_cursor_x(&editor) == 4);  // on "helper", after "int "
+  TEST_MSG("line %d col %d", buffer_get_current_line_number(editor.current_buffer),
+           editor_get_cursor_x(&editor));
+  TEST_CHECK(editor.tag_stack_size == 1);
+
+  tag_fixture_leave(&editor);
+}
+
+void test_editor_tag_ctrl_bracket_and_ctrl_t(void) {
+  Editor editor;
+  tag_fixture_enter(&editor, true);
+
+  /* Cursor onto "helper" in "  return helper(1);" (line 4, column 9). */
+  for (int i = 0; i < 3; ++i) {
+    editor_process_key(&editor, 'j');
+  }
+  for (int i = 0; i < 9; ++i) {
+    editor_process_key(&editor, 'l');
+  }
+  TEST_ASSERT(buffer_get_current_line_number(editor.current_buffer) == 4);
+  TEST_ASSERT(editor_get_cursor_x(&editor) == 9);
+
+  editor_process_key(&editor, 0x1d);  // Ctrl-]
+  TEST_CHECK(strcmp(tag_current_file(&editor), "util.c") == 0);
+  TEST_CHECK(buffer_get_current_line_number(editor.current_buffer) == 3);
+
+  editor_process_key(&editor, 0x14);  // Ctrl-T
+  TEST_CHECK(strcmp(tag_current_file(&editor), "main.c") == 0);
+  TEST_CHECK(buffer_get_current_line_number(editor.current_buffer) == 4);
+  TEST_CHECK(editor_get_cursor_x(&editor) == 9);
+  TEST_CHECK(editor.tag_stack_size == 0);
+  /* Both files stay open as buffers. */
+  TEST_CHECK(editor.number_of_buffers == 2);
+
+  tag_fixture_leave(&editor);
+}
+
+void test_editor_tag_errors(void) {
+  Editor editor;
+  tag_fixture_enter(&editor, true);
+
+  enter_command(&editor, "tag nosuchname");
+  TEST_CHECK(editor.state == EditorState_Running);
+  TEST_CHECK(editor.error_message != NULL &&
+             strstr(editor.error_message, "Tag not found") != NULL);
+  TEST_CHECK(strcmp(tag_current_file(&editor), "main.c") == 0);
+  TEST_CHECK(editor.tag_stack_size == 0);
+
+  enter_command(&editor, "tag");
+  TEST_CHECK(editor.error_message != NULL &&
+             strstr(editor.error_message, "Argument required") != NULL);
+
+  editor_process_key(&editor, 0x14);  // Ctrl-T with nothing to return to
+  TEST_CHECK(editor.error_message != NULL &&
+             strstr(editor.error_message, "bottom of tag stack") != NULL);
+
+  editor_process_key(&editor, 0x1d);  // Ctrl-] on '#', not an identifier
+  TEST_CHECK(editor.error_message != NULL &&
+             strstr(editor.error_message, "No identifier") != NULL);
+
+  tag_fixture_leave(&editor);
+}
+
+void test_editor_tag_without_tags_file(void) {
+  Editor editor;
+  tag_fixture_enter(&editor, false);
+
+  TEST_CHECK(!editor_jump_to_tag(&editor, "helper"));
+  TEST_CHECK(editor.error_message != NULL &&
+             strstr(editor.error_message, "No tags file") != NULL);
+  TEST_CHECK(strcmp(tag_current_file(&editor), "main.c") == 0);
+
+  tag_fixture_leave(&editor);
+}
+
 TEST_LIST = {
     {"test_editor_command_quit", test_editor_command_quit},
     {"test_editor_command_invalid", test_editor_command_invalid},
@@ -429,6 +584,12 @@ TEST_LIST = {
      test_editor_command_unknown_reports_not_found},
     {"test_editor_command_empty_reports_nothing",
      test_editor_command_empty_reports_nothing},
+
+    {"test_editor_tag_command_jumps_to_definition",
+     test_editor_tag_command_jumps_to_definition},
+    {"test_editor_tag_ctrl_bracket_and_ctrl_t", test_editor_tag_ctrl_bracket_and_ctrl_t},
+    {"test_editor_tag_errors", test_editor_tag_errors},
+    {"test_editor_tag_without_tags_file", test_editor_tag_without_tags_file},
 
     {NULL, NULL}
 };

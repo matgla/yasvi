@@ -244,9 +244,12 @@ static const Highlighter shell_highlighter = {
   .highlight_line = shell_highlight,
 };
 
+static const char** completion_words[] = {keywords, builtins, NULL};
+
 const Filetype g_filetype_shell = {
   .name = "shell",
   .extensions = shell_extensions,
   .shebangs = shell_shebangs,
   .highlighter = &shell_highlighter,
+  .completion_words = completion_words,
 };

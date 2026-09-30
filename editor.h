@@ -37,6 +37,14 @@ typedef enum {
   EditorState_Exiting,
 } EditorState;
 
+// Where Ctrl-] / :tag came from, for Ctrl-T to return to.
+#define EDITOR_TAG_STACK_DEPTH 20
+typedef struct {
+  char* filename;
+  int line;    // 0-based
+  int column;  // 0-based
+} TagStackEntry;
+
 typedef struct {
   EditorState state;
   Command command;
@@ -63,6 +71,9 @@ typedef struct {
   int editor_offset_x;        // X offset for editor content (for sidebar)
   SearchState search;         // Search state for / and ? commands
   Command search_buffer;      // Buffer for search pattern input
+  TagStackEntry tag_stack[EDITOR_TAG_STACK_DEPTH];
+  int tag_stack_size;
+  struct Completion* completion;  // Ctrl-N/Ctrl-P state, allocated on first use
 } Editor;
 
 void editor_process_key(Editor* editor, int key);
@@ -82,3 +93,7 @@ void editor_switch_to_prev_buffer(Editor* editor);
 void editor_switch_to_buffer_by_index(Editor* editor, size_t index);
 void editor_close_current_buffer(Editor* editor);
 void editor_draw_tab_bar(Editor* editor);
+
+// ctags navigation (tags file from `ctags -R`)
+bool editor_jump_to_tag(Editor* editor, const char* name);  // Ctrl-], :tag
+bool editor_pop_tag(Editor* editor);                        // Ctrl-T, :pop

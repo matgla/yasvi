@@ -36,10 +36,16 @@ void buffer_row_highlight_line(BufferRow* row) {
     return;
   }
 
-  // Inherit state from previous row
+  // Inherit state from previous row; the first row starts from nothing, not
+  // from the state it left with last time
   if (row->prev) {
     row->highlight_comment_open = row->prev->highlight_comment_open;
     row->highlight_string_open = row->prev->highlight_string_open;
+    row->highlight_lang_state = row->prev->highlight_lang_state;
+  } else {
+    row->highlight_comment_open = 0;
+    row->highlight_string_open = 0;
+    row->highlight_lang_state = 0;
   }
 
   row->dirty = true;
@@ -47,16 +53,19 @@ void buffer_row_highlight_line(BufferRow* row) {
 }
 
 // Re-highlight a modified row and, when its trailing multiline state (open
-// block comment / open string) changed, every row below that inherits it.
+// block comment / open string / filetype state) changed, every row below that
+// inherits it.
 void buffer_row_rehighlight(BufferRow* row) {
   while (row != NULL) {
     const int comment_open = row->highlight_comment_open;
     const int string_open = row->highlight_string_open;
+    const int lang_state = row->highlight_lang_state;
 
     buffer_row_highlight_line(row);
 
     if (row->highlight_comment_open == comment_open &&
-        row->highlight_string_open == string_open) {
+        row->highlight_string_open == string_open &&
+        row->highlight_lang_state == lang_state) {
       // State leaving this row is unchanged, rows below keep their tokens
       return;
     }
@@ -405,6 +414,7 @@ void buffer_row_break_line(BufferRow* row, int index) {
   new_row->dirty = true;
   new_row->highlight_comment_open = row->highlight_comment_open;
   new_row->highlight_string_open = row->highlight_string_open;
+  new_row->highlight_lang_state = row->highlight_lang_state;
   new_row->filetype = row->filetype;
 
   if (new_row->data != NULL) {

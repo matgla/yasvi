@@ -19,14 +19,17 @@
 
 #include <ctype.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include <ncurses.h>
 
 #include "command.h"
+#include "completion.h"
 #include "highlight.h"
 #include "file_manager.h"
 #include "search.h"
+#include "tags.h"
 #include "toolbar.h"
 #include "toolbar_widgets.h"
 
@@ -36,6 +39,13 @@
 // 1 is for command line
 // 1 is for status bar
 #define EDITOR_BOTTOM_BAR_HEIGHT 3
+
+// Insert-mode completion keys (raw mode delivers the control codes).
+#define EDITOR_KEY_CTRL_E 0x05  // cancel: put back the typed word
+#define EDITOR_KEY_CTRL_N 0x0e  // next candidate
+#define EDITOR_KEY_CTRL_P 0x10  // previous candidate
+#define EDITOR_KEY_CTRL_Y 0x19  // accept
+#define EDITOR_COMPLETION_MENU_ROWS 8
 
 typedef enum {
   CommandResult_Success = 0,
@@ -58,6 +68,11 @@ static void editor_home_cursor_y(Editor* editor);
 static void editor_home_cursor_xy(Editor* editor);
 static void editor_fix_cursor_position(Editor* editor);
 static int editor_get_content_offset_x(const Editor* editor);
+static char* editor_word_under_cursor(Editor* editor);
+static void editor_goto_position(Editor* editor, int line, int column);
+static void editor_complete(Editor* editor, int step);
+static void editor_completion_end(Editor* editor, bool restore);
+static void editor_draw_completion_menu(Editor* editor);
 
 #ifdef __GNUC__
 char* itoa(int n, char* s, int base) {
@@ -183,6 +198,20 @@ static void editor_clear_error_message(Editor* editor) {
 
 // Handle search pattern input (for / and ? commands)
 // Returns true if search should continue to next state
+// Puts `line` (0-based) at the top of the view and the cursor on `column`.
+static void editor_goto_position(Editor* editor, int line, int column) {
+  int current_line = buffer_get_current_line_number(editor->current_buffer) - 1;
+  int line_diff = line - current_line;
+  if (line_diff != 0) {
+    buffer_scroll_rows(editor->current_buffer, line_diff);
+    editor->start_line = line;
+    editor->cursor.y = EDITOR_TOP_BAR_HEIGHT;
+    editor_mark_dirty_whole_screen(editor);
+  }
+  editor_home_cursor_x(editor);
+  editor_move_cursor_x(editor, column, false);
+}
+
 static bool editor_collect_search_pattern(Editor* editor, int key) {
   if (key == '\n') {
     // Execute search
@@ -204,23 +233,8 @@ static bool editor_collect_search_pattern(Editor* editor, int key) {
 
       if (found) {
         // Move cursor to match
-        int target_line = editor->search.last_match_line;
-        int target_col = editor->search.last_match_col;
-        int current_line =
-          buffer_get_current_line_number(editor->current_buffer) - 1;
-
-        // Scroll to the line
-        int line_diff = target_line - current_line;
-        if (line_diff != 0) {
-          buffer_scroll_rows(editor->current_buffer, line_diff);
-          editor->start_line = target_line;
-          editor->cursor.y = EDITOR_TOP_BAR_HEIGHT;
-          editor_mark_dirty_whole_screen(editor);
-        }
-
-        // Move cursor to column
-        editor_home_cursor_x(editor);
-        editor_move_cursor_x(editor, target_col, false);
+        editor_goto_position(editor, editor->search.last_match_line,
+                             editor->search.last_match_col);
       } else {
         editor_set_error_message(editor, "Pattern not found");
       }
@@ -259,21 +273,8 @@ static void editor_search_next(Editor* editor) {
   bool found = search_find_next(&editor->search, editor->current_buffer);
 
   if (found) {
-    int target_line = editor->search.last_match_line;
-    int target_col = editor->search.last_match_col;
-    int current_line =
-      buffer_get_current_line_number(editor->current_buffer) - 1;
-
-    int line_diff = target_line - current_line;
-    if (line_diff != 0) {
-      buffer_scroll_rows(editor->current_buffer, line_diff);
-      editor->start_line = target_line;
-      editor->cursor.y = EDITOR_TOP_BAR_HEIGHT;
-      editor_mark_dirty_whole_screen(editor);
-    }
-
-    editor_home_cursor_x(editor);
-    editor_move_cursor_x(editor, target_col, false);
+    editor_goto_position(editor, editor->search.last_match_line,
+                         editor->search.last_match_col);
   } else {
     editor_set_error_message(editor, "Pattern not found");
   }
@@ -290,21 +291,8 @@ static void editor_search_prev(Editor* editor) {
   bool found = search_find_prev(&editor->search, editor->current_buffer);
 
   if (found) {
-    int target_line = editor->search.last_match_line;
-    int target_col = editor->search.last_match_col;
-    int current_line =
-      buffer_get_current_line_number(editor->current_buffer) - 1;
-
-    int line_diff = target_line - current_line;
-    if (line_diff != 0) {
-      buffer_scroll_rows(editor->current_buffer, line_diff);
-      editor->start_line = target_line;
-      editor->cursor.y = EDITOR_TOP_BAR_HEIGHT;
-      editor_mark_dirty_whole_screen(editor);
-    }
-
-    editor_home_cursor_x(editor);
-    editor_move_cursor_x(editor, target_col, false);
+    editor_goto_position(editor, editor->search.last_match_line,
+                         editor->search.last_match_col);
   } else {
     editor_set_error_message(editor, "Pattern not found");
   }
@@ -542,6 +530,27 @@ static CommandResult editor_process_command(Editor* editor) {
     free(pattern);
     free(replacement);
     return CommandResult_Success;
+  }
+
+  // :tag NAME / :ta NAME -- jump to a ctags definition
+  if (strncmp(command->buffer, "tag", 3) == 0 || strncmp(command->buffer, "ta", 2) == 0) {
+    const char* arg = command->buffer + (command->buffer[2] == 'g' ? 3 : 2);
+    if (*arg != ' ' && *arg != '\0') {
+      editor_set_error_message(editor, "Command not found");
+      return CommandResult_Error;
+    }
+    while (*arg == ' ') {
+      ++arg;
+    }
+    if (*arg == '\0') {
+      editor_set_error_message(editor, "Argument required");
+      return CommandResult_Error;
+    }
+    return editor_jump_to_tag(editor, arg) ? CommandResult_Success
+                                           : CommandResult_Error;
+  }
+  if (strcmp(command->buffer, "pop") == 0 || strcmp(command->buffer, "po") == 0) {
+    return editor_pop_tag(editor) ? CommandResult_Success : CommandResult_Error;
   }
 
   if (command->buffer[0] == '\0') {
@@ -806,6 +815,20 @@ static void editor_process_editor_key(Editor* editor, int key) {
     case 'N': {
       // Find previous match
       editor_search_prev(editor);
+      return;
+    }
+    case 0x1d: {  // Ctrl-]
+      char* word = editor_word_under_cursor(editor);
+      if (word == NULL) {
+        editor_set_error_message(editor, "No identifier under cursor");
+        return;
+      }
+      editor_jump_to_tag(editor, word);
+      free(word);
+      return;
+    }
+    case 0x14: {  // Ctrl-T
+      editor_pop_tag(editor);
       return;
     }
     case 'g': {
@@ -1124,6 +1147,161 @@ static bool editor_process_key_sequence(Editor* editor, int key) {
   return true;
 }
 
+// Replaces the text the completion last put in the row with `text`, leaving
+// the cursor after it.
+static void editor_completion_replace(Editor* editor, const char* text) {
+  Completion* completion = editor->completion;
+  const int length = (int)strlen(text);
+  if (completion->inserted_len > 0) {
+    buffer_row_remove_chars(completion->row, completion->start, completion->inserted_len);
+  }
+  if (length > 0) {
+    buffer_row_insert_chars(completion->row, completion->start, text, length);
+  }
+  editor_move_cursor_x(editor, length - completion->inserted_len, true);
+  completion->inserted_len = length;
+}
+
+// Ctrl-N (step +1) / Ctrl-P (step -1) in insert mode: the first press
+// gathers the candidates for the word before the cursor, every press puts
+// the next (previous) one in its place, and the typed word comes back round
+// after the last.
+static void editor_complete(Editor* editor, int step) {
+  if (editor->current_buffer == NULL) {
+    return;
+  }
+  if (editor->completion == NULL) {
+    editor->completion = (Completion*)calloc(1, sizeof(Completion));
+    if (editor->completion == NULL) {
+      return;
+    }
+    editor->completion->selected = -1;
+  }
+  Completion* completion = editor->completion;
+  if (!completion->active) {
+    BufferRow* row = buffer_get_current_line(editor->current_buffer);
+    if (row == NULL) {
+      return;
+    }
+    const Filetype* filetype = editor->current_buffer->filetype;
+    const int cursor = editor_get_cursor_x(editor);
+    const int start = completion_word_start(row->data, row->len, cursor,
+                                            filetype != NULL ? filetype->word_prefix_chars : NULL);
+    char* prefix = (char*)malloc((size_t)(cursor - start) + 1);
+    if (prefix == NULL) {
+      return;
+    }
+    memcpy(prefix, &row->data[start], (size_t)(cursor - start));
+    prefix[cursor - start] = '\0';
+
+    char* tags_path = tags_find_file(buffer_get_filename(editor->current_buffer));
+    CompletionSources sources = {
+      .current = editor->current_buffer,
+      .others = (const Buffer* const*)editor->buffers,
+      .number_of_others = editor->number_of_buffers,
+      .tags_path = tags_path,
+    };
+    completion_collect(&completion->list, prefix, start, &sources);
+    free(tags_path);
+    if (completion->list.count == 0) {
+      free(prefix);
+      editor_set_error_message(editor, "No completions");
+      return;
+    }
+    if (editor->error_message) {
+      editor_clear_error_message(editor);
+    }
+    completion->active = true;
+    completion->row = row;
+    completion->start = start;
+    completion->original = prefix;
+    completion->inserted_len = cursor - start;
+    completion->selected = -1;
+  }
+  editor_completion_replace(editor, completion_step(completion, step));
+  // The menu is drawn over the rows around the cursor; redraw them all so a
+  // shorter or moved menu leaves nothing behind.
+  editor_mark_dirty_whole_screen(editor);
+}
+
+// Ends a completion, keeping the chosen text or, with `restore`, putting the
+// typed word back.
+static void editor_completion_end(Editor* editor, bool restore) {
+  Completion* completion = editor->completion;
+  if (completion == NULL || !completion->active) {
+    return;
+  }
+  if (restore) {
+    editor_completion_replace(editor, completion->original);
+  }
+  completion_reset(completion);
+  editor_mark_dirty_whole_screen(editor);
+}
+
+// The candidate menu: under the word when it fits there, else above it. The
+// selected entry is drawn in normal video in a reverse-video list, like vi's.
+static void editor_draw_completion_menu(Editor* editor) {
+  const Completion* completion = editor->completion;
+  const int count = completion->list.count;
+  const int top = EDITOR_TOP_BAR_HEIGHT;
+  const int bottom = editor->window.height - EDITOR_BOTTOM_BAR_HEIGHT;
+  const int space_below = bottom - (editor->cursor.y + 1);
+  const int space_above = editor->cursor.y - top;
+
+  int rows = count < EDITOR_COMPLETION_MENU_ROWS ? count : EDITOR_COMPLETION_MENU_ROWS;
+  int y;
+  if (rows <= space_below) {
+    y = editor->cursor.y + 1;
+  } else if (space_above > space_below) {
+    rows = rows < space_above ? rows : space_above;
+    y = editor->cursor.y - rows;
+  } else {
+    rows = space_below;
+    y = editor->cursor.y + 1;
+  }
+  if (rows <= 0) {
+    return;
+  }
+
+  int width = 0;
+  for (int i = 0; i < count; ++i) {
+    const int length = (int)strlen(completion->list.items[i]);
+    width = length > width ? length : width;
+  }
+  width += 2;  // a space either side
+  int x = editor->cursor.x - completion->inserted_len;
+  if (x < editor->number_of_line_digits) {
+    x = editor->number_of_line_digits;
+  }
+  if (width > editor->window.width) {
+    width = editor->window.width;
+  }
+  if (x + width > editor->window.width) {
+    x = editor->window.width - width;
+  }
+
+  const int first = completion->selected >= rows ? completion->selected - rows + 1 : 0;
+  char line[256];
+  if (width > (int)sizeof(line) - 1) {
+    width = (int)sizeof(line) - 1;
+  }
+  for (int i = 0; i < rows && first + i < count; ++i) {
+    const int index = first + i;
+    const char* item = completion->list.items[index];
+    int length = (int)strlen(item);
+    if (length > width - 2) {
+      length = width - 2;
+    }
+    line[0] = ' ';
+    memcpy(&line[1], item, (size_t)length);
+    memset(&line[1 + length], ' ', (size_t)(width - 1 - length));
+    line[width] = '\0';
+    attrset(index == completion->selected ? (A_BOLD | COLOR_OTHER) : A_REVERSE);
+    mvaddnstr(y + i, x, line, width);
+  }
+  attrset(COLOR_OTHER);
+}
+
 void editor_insert_char(Editor* editor, int key) {
   BufferRow* current_row = buffer_get_current_line(editor->current_buffer);
   switch (key) {
@@ -1311,6 +1489,18 @@ void editor_process_key(Editor* editor, int key) {
         }
         break;
       case EditorState_EditMode:
+        if (key == EDITOR_KEY_CTRL_N || key == EDITOR_KEY_CTRL_P) {
+          editor_complete(editor, key == EDITOR_KEY_CTRL_N ? 1 : -1);
+          return;
+        }
+        if (editor->completion != NULL && editor->completion->active) {
+          // Ctrl-E puts back what was typed; anything else keeps the match,
+          // and a key other than Ctrl-Y then does what it always does.
+          editor_completion_end(editor, key == EDITOR_KEY_CTRL_E);
+          if (key == EDITOR_KEY_CTRL_E || key == EDITOR_KEY_CTRL_Y) {
+            return;
+          }
+        }
         if (key == 27) {
           editor->state = EditorState_Running;
           // just in case we are after last character while appeding/removing last
@@ -1413,6 +1603,11 @@ void editor_redraw_screen(Editor* editor) {
     }
   }
 
+  if (editor->state == EditorState_EditMode && editor->completion != NULL &&
+      editor->completion->active) {
+    editor_draw_completion_menu(editor);
+  }
+
   switch (editor->state) {
     case EditorState_Running:
     case EditorState_EditMode:
@@ -1474,6 +1669,11 @@ void editor_init(Editor* editor) {
 }
 
 void editor_deinit(Editor* editor) {
+  if (editor->completion != NULL) {
+    completion_reset(editor->completion);
+    free(editor->completion);
+    editor->completion = NULL;
+  }
   for (size_t i = 0; i < editor->number_of_buffers; ++i) {
     buffer_free(editor->buffers[i]);
   }
@@ -1500,6 +1700,10 @@ void editor_deinit(Editor* editor) {
     file_manager_free(editor->file_manager);
     editor->file_manager = NULL;
   }
+  for (int i = 0; i < editor->tag_stack_size; ++i) {
+    free(editor->tag_stack[i].filename);
+  }
+  editor->tag_stack_size = 0;
   // Clean up search state
   search_deinit(&editor->search);
   if (editor->search_buffer.buffer != NULL) {
@@ -1811,4 +2015,182 @@ void editor_draw_tab_bar(Editor* editor) {
     addch('-');
   }
   attrset(COLOR_OTHER);
+}
+
+// ============================================================================
+// ctags navigation
+// ============================================================================
+
+static bool editor_is_identifier_char(char c) {
+  return isalnum((unsigned char)c) || c == '_';
+}
+
+// The identifier the cursor is on, malloc'd; NULL when it is on anything else.
+static char* editor_word_under_cursor(Editor* editor) {
+  const BufferRow* row = buffer_get_current_line(editor->current_buffer);
+  const int x = editor_get_cursor_x(editor);
+  if (row == NULL || x < 0 || x >= row->len ||
+      !editor_is_identifier_char(row->data[x])) {
+    return NULL;
+  }
+  int start = x;
+  int end = x;
+  while (start > 0 && editor_is_identifier_char(row->data[start - 1])) {
+    --start;
+  }
+  while (end < row->len && editor_is_identifier_char(row->data[end])) {
+    ++end;
+  }
+  char* word = (char*)malloc((size_t)(end - start) + 1);
+  if (word != NULL) {
+    memcpy(word, &row->data[start], (size_t)(end - start));
+    word[end - start] = '\0';
+  }
+  return word;
+}
+
+// Makes `path` the current buffer, loading it if no buffer has it open.
+static bool editor_open_path(Editor* editor, const char* path) {
+  const char* current = editor->current_buffer
+                          ? buffer_get_filename(editor->current_buffer)
+                          : NULL;
+  if (current != NULL && strcmp(current, path) == 0) {
+    return true;
+  }
+  Buffer* existing = editor_find_buffer_by_filename(editor, path);
+  if (existing != NULL) {
+    for (size_t i = 0; i < editor->number_of_buffers; ++i) {
+      if (editor->buffers[i] == existing) {
+        editor_switch_to_buffer_by_index(editor, i);
+        return true;
+      }
+    }
+  }
+  // buffer_load_from_file turns a missing file into an empty new one; a tag
+  // pointing at a file that is gone should say so instead.
+  FILE* probe = fopen(path, "r");
+  if (probe == NULL) {
+    editor_set_error_message(editor, "Cannot open file from tags");
+    return false;
+  }
+  fclose(probe);
+  Buffer* buffer = buffer_alloc();
+  if (buffer == NULL) {
+    editor_set_error_message(editor, "Failed to allocate memory for buffer");
+    return false;
+  }
+  buffer_load_from_file(buffer, path);
+  if (!editor_append_buffer(editor, buffer)) {
+    editor_set_error_message(editor, "Failed to append buffer");
+    buffer_free(buffer);
+    return false;
+  }
+  editor_switch_to_buffer_by_index(editor, editor->number_of_buffers - 1);
+  return true;
+}
+
+static void editor_push_tag_position(Editor* editor) {
+  const char* filename = editor->current_buffer
+                           ? buffer_get_filename(editor->current_buffer)
+                           : NULL;
+  if (filename == NULL) {
+    return;  // an unnamed buffer has nowhere to come back to
+  }
+  const size_t length = strlen(filename);
+  char* copy = (char*)malloc(length + 1);
+  if (copy == NULL) {
+    return;
+  }
+  memcpy(copy, filename, length + 1);
+  if (editor->tag_stack_size == EDITOR_TAG_STACK_DEPTH) {
+    // Full: forget the oldest position, as vim does.
+    free(editor->tag_stack[0].filename);
+    memmove(&editor->tag_stack[0], &editor->tag_stack[1],
+            sizeof(TagStackEntry) * (EDITOR_TAG_STACK_DEPTH - 1));
+    --editor->tag_stack_size;
+  }
+  TagStackEntry* entry = &editor->tag_stack[editor->tag_stack_size++];
+  entry->filename = copy;
+  entry->line = buffer_get_current_line_number(editor->current_buffer) - 1;
+  entry->column = editor_get_cursor_x(editor);
+}
+
+bool editor_jump_to_tag(Editor* editor, const char* name) {
+  const char* current = editor->current_buffer
+                          ? buffer_get_filename(editor->current_buffer)
+                          : NULL;
+  char* tags_path = tags_find_file(current);
+  if (tags_path == NULL) {
+    editor_set_error_message(editor, "No tags file (run ctags -R)");
+    return false;
+  }
+  TagEntry* entries = NULL;
+  const int count = tags_lookup(tags_path, name, &entries);
+  free(tags_path);
+  if (count == 0) {
+    editor_set_error_message(editor, "Tag not found");
+    return false;
+  }
+
+  // A definition in this file wins: a static function shadows another
+  // file's function of the same name.
+  int pick = 0;
+  for (int i = 0; current != NULL && i < count; ++i) {
+    if (strcmp(entries[i].filename, current) == 0) {
+      pick = i;
+      break;
+    }
+  }
+
+  editor_push_tag_position(editor);
+  if (!editor_open_path(editor, entries[pick].filename)) {
+    // Nothing moved, so the position just pushed is not a place to return to.
+    if (editor->tag_stack_size > 0) {
+      free(editor->tag_stack[--editor->tag_stack_size].filename);
+    }
+    tags_free_entries(entries, count);
+    return false;
+  }
+
+  int line = tags_find_line(&entries[pick], editor->current_buffer);
+  int column = 0;
+  if (line >= 0) {
+    // Land on the name itself, as vim does, when the line spells it out.
+    const BufferRow* row = buffer_get_row(editor->current_buffer, line);
+    const size_t name_len = strlen(name);
+    for (int i = 0; row != NULL && i + (int)name_len <= row->len; ++i) {
+      if (memcmp(&row->data[i], name, name_len) == 0 &&
+          (i == 0 || !editor_is_identifier_char(row->data[i - 1])) &&
+          (i + (int)name_len == row->len ||
+           !editor_is_identifier_char(row->data[i + name_len]))) {
+        column = i;
+        break;
+      }
+    }
+  }
+  editor_goto_position(editor, line >= 0 ? line : 0, column);
+
+  if (line < 0) {
+    editor_set_error_message(editor, "Tag moved: pattern not found in file");
+  } else if (count > 1) {
+    char message[48];
+    snprintf(message, sizeof(message), "tag %d of %d", pick + 1, count);
+    editor_set_error_message(editor, message);
+  }
+  tags_free_entries(entries, count);
+  return true;
+}
+
+bool editor_pop_tag(Editor* editor) {
+  if (editor->tag_stack_size == 0) {
+    editor_set_error_message(editor, "At bottom of tag stack");
+    return false;
+  }
+  TagStackEntry entry = editor->tag_stack[--editor->tag_stack_size];
+  bool opened = editor_open_path(editor, entry.filename);
+  if (opened) {
+    editor_goto_position(editor, entry.line, entry.column);
+  }
+  free(entry.filename);
+  return opened;
 }

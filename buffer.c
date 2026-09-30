@@ -62,6 +62,7 @@ static void buffer_insert_below_current(Buffer* buffer) {
   new_row->highlight_data = (char*)malloc(new_row->allocated_size);
   new_row->highlight_comment_open = 0;
   new_row->highlight_string_open = 0;
+  new_row->highlight_lang_state = 0;
   new_row->filetype = buffer->filetype;
   memset(new_row->highlight_data, 0, new_row->allocated_size);
   new_row->dirty = 1;
@@ -138,6 +139,7 @@ bool buffer_append_line(Buffer* buffer, const char* line) {
   new_row->highlight_data = (char*)malloc(new_row->allocated_size);
   new_row->highlight_comment_open = 0;
   new_row->highlight_string_open = 0;
+  new_row->highlight_lang_state = 0;
   new_row->filetype = buffer->filetype;
   if (new_row->data == NULL || new_row->highlight_data == NULL) {
     if (new_row->data) {
@@ -246,6 +248,7 @@ void buffer_load_from_file(Buffer* buffer, const char* filename) {
   if (buffer->head) {
     buffer->head->highlight_comment_open = 0;
     buffer->head->highlight_string_open = 0;
+    buffer->head->highlight_lang_state = 0;
   }
   for (BufferRow* row = buffer->head; row; row = row->next) {
     row->filetype = buffer->filetype;

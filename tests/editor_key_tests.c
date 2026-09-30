@@ -56,6 +56,7 @@ static inline void window_deinit(MockWindow* window) {
 #include "command.h"
 #include "cursor.h"
 #include "search.h"
+#include "filetypes/filetype.h"
 
 #undef WINDOW
 
@@ -70,6 +71,14 @@ typedef enum {
   EditorState_SearchInputBackward,
   EditorState_Exiting,
 } EditorState;
+
+/* Mirrors editor.h: the tag stack sits after search_buffer. */
+#define EDITOR_TAG_STACK_DEPTH 20
+typedef struct {
+  char* filename;
+  int line;
+  int column;
+} TagStackEntry;
 
 typedef struct {
   EditorState state;
@@ -97,12 +106,16 @@ typedef struct {
   int editor_offset_x;
   SearchState search;
   Command search_buffer;
+  TagStackEntry tag_stack[EDITOR_TAG_STACK_DEPTH];
+  int tag_stack_size;
+  void* completion;  // struct Completion*
 } Editor;
 
 /* External functions */
 void editor_process_key(Editor* editor, int key);
 void editor_deinit(Editor* editor);
 void editor_create_new_file(Editor* editor);
+int editor_get_cursor_x(const Editor* editor);
 
 /* Test setup */
 static void setup_editor(Editor* editor) {
@@ -435,6 +448,102 @@ void test_editor_key_b_moves_word_backward(void) {
   editor_deinit(&editor);
 }
 
+
+/* Insert mode on a one-line buffer holding `text`, cursor at its end. */
+static void setup_insert_at_end(Editor* editor, const char* text) {
+  setup_editor(editor);
+  editor_create_new_file(editor);
+  buffer_row_replace_line(buffer_get_current_line(editor->current_buffer), text);
+  editor->state = EditorState_EditMode;
+  editor->cursor.x = editor->number_of_line_digits + (int)strlen(text);
+}
+
+static const char* current_text(const Editor* editor) {
+  return buffer_get_current_line(editor->current_buffer)->data;
+}
+
+void test_editor_ctrl_n_completes_and_cycles(void) {
+  Editor editor;
+  setup_insert_at_end(&editor, "counter count co");
+
+  editor_process_key(&editor, 0x0e);  // Ctrl-N: nearest following, wrapping: counter
+  TEST_CHECK(strcmp(current_text(&editor), "counter count counter") == 0);
+  TEST_CHECK(editor_get_cursor_x(&editor) == 21);
+  TEST_CHECK(editor.state == EditorState_EditMode);
+
+  editor_process_key(&editor, 0x0e);  // count
+  TEST_CHECK(strcmp(current_text(&editor), "counter count count") == 0);
+  TEST_CHECK(editor_get_cursor_x(&editor) == 19);
+
+  editor_process_key(&editor, 0x0e);  // back to what was typed
+  TEST_CHECK(strcmp(current_text(&editor), "counter count co") == 0);
+  TEST_CHECK(editor_get_cursor_x(&editor) == 16);
+
+  editor_process_key(&editor, 0x10);  // Ctrl-P: the last one again
+  TEST_CHECK(strcmp(current_text(&editor), "counter count count") == 0);
+
+  editor_deinit(&editor);
+}
+
+void test_editor_typing_after_completion_keeps_it(void) {
+  Editor editor;
+  setup_insert_at_end(&editor, "counter co");
+
+  editor_process_key(&editor, 0x0e);
+  editor_process_key(&editor, '+');
+  TEST_CHECK(strcmp(current_text(&editor), "counter counter+") == 0);
+
+  // A new Ctrl-N starts over from the word before the cursor (none here).
+  editor_process_key(&editor, 'c');
+  editor_process_key(&editor, 0x0e);
+  TEST_CHECK(strcmp(current_text(&editor), "counter counter+counter") == 0);
+
+  editor_process_key(&editor, 27);  // Escape keeps it and leaves insert mode
+  TEST_CHECK(strcmp(current_text(&editor), "counter counter+counter") == 0);
+  TEST_CHECK(editor.state == EditorState_Running);
+  editor_deinit(&editor);
+}
+
+void test_editor_ctrl_e_puts_back_the_typed_word(void) {
+  Editor editor;
+  setup_insert_at_end(&editor, "counter co");
+
+  editor_process_key(&editor, 0x0e);
+  editor_process_key(&editor, 0x05);  // Ctrl-E
+  TEST_CHECK(strcmp(current_text(&editor), "counter co") == 0);
+  TEST_CHECK(editor_get_cursor_x(&editor) == 10);
+  TEST_CHECK(editor.state == EditorState_EditMode);
+
+  editor_process_key(&editor, 0x0e);
+  editor_process_key(&editor, 0x19);  // Ctrl-Y accepts, inserting nothing else
+  TEST_CHECK(strcmp(current_text(&editor), "counter counter") == 0);
+  editor_deinit(&editor);
+}
+
+void test_editor_ctrl_n_without_matches(void) {
+  Editor editor;
+  setup_insert_at_end(&editor, "alpha zz");
+
+  editor_process_key(&editor, 0x0e);
+  TEST_CHECK(strcmp(current_text(&editor), "alpha zz") == 0);
+  TEST_CHECK(editor.error_message != NULL && strcmp(editor.error_message, "No completions") == 0);
+  TEST_CHECK(editor.state == EditorState_EditMode);
+
+  editor_process_key(&editor, 'x');  // still inserting as usual
+  TEST_CHECK(strcmp(current_text(&editor), "alpha zzx") == 0);
+  editor_deinit(&editor);
+}
+
+void test_editor_ctrl_n_completes_zig_builtins(void) {
+  Editor editor;
+  setup_insert_at_end(&editor, "const std = @imp");
+  editor.current_buffer->filetype = &g_filetype_zig;
+
+  editor_process_key(&editor, 0x0e);
+  TEST_CHECK(strcmp(current_text(&editor), "const std = @import") == 0);
+  editor_deinit(&editor);
+}
+
 TEST_LIST = {
     {"test_editor_key_h_moves_left", test_editor_key_h_moves_left},
     {"test_editor_key_l_moves_right", test_editor_key_l_moves_right},
@@ -453,6 +562,11 @@ TEST_LIST = {
     {"test_editor_key_x_deletes_char", test_editor_key_x_deletes_char},
     {"test_editor_key_w_moves_word_forward", test_editor_key_w_moves_word_forward},
     {"test_editor_key_b_moves_word_backward", test_editor_key_b_moves_word_backward},
+    {"test_editor_ctrl_n_completes_and_cycles", test_editor_ctrl_n_completes_and_cycles},
+    {"test_editor_typing_after_completion_keeps_it", test_editor_typing_after_completion_keeps_it},
+    {"test_editor_ctrl_e_puts_back_the_typed_word", test_editor_ctrl_e_puts_back_the_typed_word},
+    {"test_editor_ctrl_n_without_matches", test_editor_ctrl_n_without_matches},
+    {"test_editor_ctrl_n_completes_zig_builtins", test_editor_ctrl_n_completes_zig_builtins},
 
     {NULL, NULL}
 };

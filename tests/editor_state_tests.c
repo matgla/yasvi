@@ -73,6 +73,14 @@ typedef enum {
   EditorState_Exiting,
 } EditorState;
 
+/* Mirrors editor.h: the tag stack sits after search_buffer. */
+#define EDITOR_TAG_STACK_DEPTH 20
+typedef struct {
+  char* filename;
+  int line;
+  int column;
+} TagStackEntry;
+
 typedef struct {
   EditorState state;
   Command command;
@@ -99,6 +107,9 @@ typedef struct {
   int editor_offset_x;  // X offset for editor content (for sidebar)
   SearchState search;   // Search state for / and ? commands
   Command search_buffer; // Buffer for search pattern input
+  TagStackEntry tag_stack[EDITOR_TAG_STACK_DEPTH];
+  int tag_stack_size;
+  void* completion;  // struct Completion*
 } Editor;
 
 /* Function declarations from editor.c that we need to test */

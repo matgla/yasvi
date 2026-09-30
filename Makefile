@@ -1,5 +1,9 @@
 CC ?= armv8m-tcc
 CFLAGS = -Wall -Wextra $(ROOTFS_DEBUG_CFLAGS)
+# Track header dependencies: without them an incremental build keeps objects
+# compiled against an older struct layout (a stale main.o with a smaller Editor
+# left editor->completion uninitialised, and :q freed a pointer into .bss).
+DEPFLAGS = -MMD -MP
 LDFLAGS = 
 SRCS = $(wildcard *.c) $(wildcard filetypes/*.c)
 OBJS = $(patsubst %.c, build/%.o, $(SRCS))
@@ -34,7 +38,9 @@ all: $(TARGET)
 
 build/%.o: %.c
 	mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -c $< -o $@
+	$(CC) $(CFLAGS) $(DEPFLAGS) -c $< -o $@
+
+-include $(OBJS:.o=.d)
 
 $(TARGET): $(OBJS)
 	$(CC) $^ $(LDFLAGS) -o $@

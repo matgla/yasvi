@@ -33,6 +33,7 @@ typedef struct BufferRow {
   bool dirty;
   int highlight_comment_open;
   int highlight_string_open;
+  int highlight_lang_state;  // HighlightContext.lang_state leaving this row
   const struct Filetype* filetype;  // Reference to buffer's filetype (may be NULL)
 } BufferRow;
 

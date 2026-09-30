@@ -10,8 +10,9 @@ LDFLAGS += -fsanitize=address
 endif
 
 # System Under Test sources (will be compiled with tests)
-SUT_SRCS = ../buffer.c ../buffer_row.c ../command.c ../search.c \
-           ../filetypes/filetype.c ../filetypes/c.c ../filetypes/shell.c
+SUT_SRCS = ../buffer.c ../buffer_row.c ../command.c ../completion.c ../search.c ../tags.c \
+           ../filetypes/filetype.c ../filetypes/c.c ../filetypes/shell.c \
+           ../filetypes/zig.c ../filetypes/pio.c
 
 # File manager sources (need ncurses)
 FM_SRCS = ../file_manager.c
@@ -29,6 +30,9 @@ TEST_NAMES = buffer_tests command_tests \
              buffer_row_navigation_tests \
              buffer_row_line_tests \
              buffer_row_highlight_tests \
+             zig_highlight_tests \
+             pio_highlight_tests \
+             completion_tests \
              buffer_lifecycle_tests \
              buffer_row_management_tests \
              buffer_navigation_tests \
@@ -41,6 +45,7 @@ TEST_NAMES = buffer_tests command_tests \
              file_manager_integration_tests \
              buffer_tab_integration_tests \
              search_tests \
+             tags_tests \
              search_cycle_tests \
              toolbar_layout_tests
 
@@ -72,6 +77,15 @@ build/buffer_row_line_tests: buffer_row_line_tests.c $(SUT_SRCS) acutest.h | bui
 
 build/buffer_row_highlight_tests: buffer_row_highlight_tests.c $(SUT_SRCS) acutest.h | build
 	$(CC) $(CFLAGS) -o $@ buffer_row_highlight_tests.c $(SUT_SRCS) $(LDFLAGS)
+
+build/zig_highlight_tests: zig_highlight_tests.c $(SUT_SRCS) acutest.h | build
+	$(CC) $(CFLAGS) -o $@ zig_highlight_tests.c $(SUT_SRCS) $(LDFLAGS)
+
+build/pio_highlight_tests: pio_highlight_tests.c $(SUT_SRCS) acutest.h | build
+	$(CC) $(CFLAGS) -o $@ pio_highlight_tests.c $(SUT_SRCS) $(LDFLAGS)
+
+build/completion_tests: completion_tests.c $(SUT_SRCS) acutest.h | build
+	$(CC) $(CFLAGS) -o $@ completion_tests.c $(SUT_SRCS) $(LDFLAGS)
 
 build/buffer_lifecycle_tests: buffer_lifecycle_tests.c $(SUT_SRCS) acutest.h | build
 	$(CC) $(CFLAGS) -o $@ buffer_lifecycle_tests.c $(SUT_SRCS) $(LDFLAGS)
@@ -112,6 +126,9 @@ build/buffer_tab_integration_tests: buffer_tab_integration_tests.c $(SUT_SRCS) $
 
 build/search_tests: search_tests.c $(SUT_SRCS) acutest.h | build
 	$(CC) $(CFLAGS) -o $@ search_tests.c $(SUT_SRCS) $(LDFLAGS)
+
+build/tags_tests: tags_tests.c $(SUT_SRCS) acutest.h | build
+	$(CC) $(CFLAGS) -o $@ tags_tests.c $(SUT_SRCS) $(LDFLAGS)
 
 build/search_cycle_tests: search_cycle_tests.c $(SUT_SRCS) acutest.h | build
 	$(CC) $(CFLAGS) -o $@ search_cycle_tests.c $(SUT_SRCS) $(LDFLAGS)

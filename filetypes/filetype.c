@@ -24,11 +24,15 @@
 // Include built-in filetype definitions
 #include "c.h"
 #include "shell.h"
+#include "pio.h"
+#include "zig.h"
 
 // Registry of all built-in filetypes
 const Filetype* g_filetypes[] = {
   &g_filetype_c,
   &g_filetype_shell,
+  &g_filetype_zig,
+  &g_filetype_pio,
 };
 
 const size_t g_num_filetypes = sizeof(g_filetypes) / sizeof(g_filetypes[0]);
@@ -133,6 +137,7 @@ void buffer_row_highlight_with_filetype(BufferRow* row, const Filetype* filetype
     .in_multiline_comment = row->highlight_comment_open,
     .in_string = row->highlight_string_open != 0,
     .string_char = row->highlight_string_open,
+    .lang_state = row->highlight_lang_state,
   };
 
   // Call the highlighter
@@ -141,4 +146,5 @@ void buffer_row_highlight_with_filetype(BufferRow* row, const Filetype* filetype
   // Update multiline state for next line
   row->highlight_comment_open = ctx.in_multiline_comment;
   row->highlight_string_open = ctx.in_string ? ctx.string_char : 0;
+  row->highlight_lang_state = ctx.lang_state;
 }

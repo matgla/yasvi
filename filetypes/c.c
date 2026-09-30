@@ -232,9 +232,12 @@ static const Highlighter c_highlighter = {
   .highlight_line = c_highlight,
 };
 
+static const char** completion_words[] = {keywords_1, types, keywords_2, NULL};
+
 const Filetype g_filetype_c = {
   .name = "c",
   .extensions = c_extensions,
   .shebangs = NULL,  // C doesn't use shebangs
   .highlighter = &c_highlighter,
+  .completion_words = completion_words,
 };

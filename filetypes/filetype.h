@@ -35,6 +35,9 @@ typedef struct HighlightContext {
   bool in_multiline_comment;
   bool in_string;
   char string_char;  // '"' or '\'' for tracking string type
+  // Filetype-private state (0 at the top of the file), such as which embedded
+  // language a line of a .pio code block is in
+  int lang_state;
 } HighlightContext;
 
 // Highlighter interface for a specific language
@@ -49,6 +52,13 @@ typedef struct Filetype {
   const char** extensions; // NULL-terminated array of extensions
   const char** shebangs;   // NULL-terminated array of shebangs (optional)
   const Highlighter* highlighter;
+  // Words insert-mode completion offers besides those in open buffers and the
+  // tags file: a NULL-terminated array of NULL-terminated word lists (may be
+  // NULL). Usually the keyword and type lists the highlighter already has.
+  const char*** completion_words;
+  // Characters that may start a word but not continue one, such as Zig's '@'
+  // in @import. NULL or "" when words are plain identifiers.
+  const char* word_prefix_chars;
 } Filetype;
 
 // Lookup functions
@@ -62,6 +72,8 @@ void buffer_row_highlight_with_filetype(BufferRow* row, const Filetype* filetype
 // Built-in filetypes (defined in their respective files)
 extern const Filetype g_filetype_c;
 extern const Filetype g_filetype_shell;
+extern const Filetype g_filetype_zig;
+extern const Filetype g_filetype_pio;
 
 // Registry of all built-in filetypes
 extern const Filetype* g_filetypes[];
