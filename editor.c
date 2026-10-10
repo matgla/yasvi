@@ -26,6 +26,7 @@
 
 #include "command.h"
 #include "completion.h"
+#include "help.h"
 #include "highlight.h"
 #include "file_manager.h"
 #include "search.h"
@@ -45,6 +46,8 @@
 #define EDITOR_KEY_CTRL_N 0x0e  // next candidate
 #define EDITOR_KEY_CTRL_P 0x10  // previous candidate
 #define EDITOR_KEY_CTRL_Y 0x19  // accept
+#define EDITOR_KEY_CTRL_H 0x08  // window left: the file manager
+#define EDITOR_KEY_CTRL_L 0x0c  // window right: the editor
 #define EDITOR_COMPLETION_MENU_ROWS 8
 
 typedef enum {
@@ -73,6 +76,7 @@ static void editor_goto_position(Editor* editor, int line, int column);
 static void editor_complete(Editor* editor, int step);
 static void editor_completion_end(Editor* editor, bool restore);
 static void editor_draw_completion_menu(Editor* editor);
+static bool editor_append_buffer(Editor* editor, Buffer* buffer);
 
 #ifdef __GNUC__
 char* itoa(int n, char* s, int base) {
@@ -345,6 +349,29 @@ static CommandResult editor_process_save_command(Editor* editor) {
   return should_exit ? CommandResult_ShouldExit : CommandResult_Success;
 }
 
+// :help -- the built-in help lives in its own buffer, like vim's :help.
+// An already-open help buffer is reused, never duplicated.
+static bool editor_show_help(Editor* editor) {
+  for (size_t i = 0; editor->buffers != NULL && i < editor->number_of_buffers; ++i) {
+    const char* filename = buffer_get_filename(editor->buffers[i]);
+    if (filename != NULL && strcmp(filename, HELP_BUFFER_NAME) == 0) {
+      editor_switch_to_buffer_by_index(editor, i);
+      return true;
+    }
+  }
+  Buffer* buffer = help_alloc_buffer();
+  if (buffer == NULL) {
+    editor_set_error_message(editor, "Failed to allocate memory for help");
+    return false;
+  }
+  if (!editor_append_buffer(editor, buffer)) {
+    buffer_free(buffer);
+    return false;
+  }
+  editor_switch_to_buffer_by_index(editor, editor->number_of_buffers - 1);
+  return true;
+}
+
 static CommandResult editor_process_command(Editor* editor) {
   const Command* command = &editor->command;
   if (command->buffer == NULL) {
@@ -551,6 +578,12 @@ static CommandResult editor_process_command(Editor* editor) {
   }
   if (strcmp(command->buffer, "pop") == 0 || strcmp(command->buffer, "po") == 0) {
     return editor_pop_tag(editor) ? CommandResult_Success : CommandResult_Error;
+  }
+
+  // :help and its unambiguous prefixes h/he/hel -- the built-in help
+  if (strcmp(command->buffer, "h") == 0 || strcmp(command->buffer, "he") == 0 ||
+      strcmp(command->buffer, "hel") == 0 || strcmp(command->buffer, "help") == 0) {
+    return editor_show_help(editor) ? CommandResult_Success : CommandResult_Error;
   }
 
   if (command->buffer[0] == '\0') {
@@ -1431,6 +1464,30 @@ void editor_process_key(Editor* editor, int key) {
       editor->state = EditorState_FileManager;
     }
     return;
+  }
+
+  // Ctrl-H and Ctrl-L move between the file manager window (left) and the
+  // editor window (right), like vim's Ctrl-W h/l. Ctrl-J and Ctrl-K would
+  // move between stacked windows - there are none, so they do nothing.
+  if (editor->state != EditorState_EditMode) {
+    if (key == EDITOR_KEY_CTRL_H && editor->file_manager &&
+        editor->state != EditorState_FileManager) {
+      // Ctrl-H: focus the file manager window, opening it when closed
+      if (!editor->file_manager->visible) {
+        editor_toggle_file_manager(editor);
+      }
+      editor->state = EditorState_FileManager;
+      return;
+    }
+    if (key == EDITOR_KEY_CTRL_L) {
+      // Ctrl-L: back to the editor window; there is no window to its
+      // right, so from the editor it does nothing.
+      if (editor->state == EditorState_FileManager) {
+        editor_toggle_file_manager(editor);
+        editor->state = EditorState_Running;
+      }
+      return;
+    }
   }
 
   bool done = false;

@@ -10,7 +10,7 @@ LDFLAGS += -fsanitize=address
 endif
 
 # System Under Test sources (will be compiled with tests)
-SUT_SRCS = ../buffer.c ../buffer_row.c ../command.c ../completion.c ../search.c ../tags.c \
+SUT_SRCS = ../buffer.c ../buffer_row.c ../command.c ../completion.c ../help.c ../search.c ../tags.c \
            ../filetypes/filetype.c ../filetypes/c.c ../filetypes/shell.c \
            ../filetypes/zig.c ../filetypes/pio.c
 

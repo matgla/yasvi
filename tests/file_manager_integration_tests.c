@@ -365,6 +365,62 @@ void test_editor_offset_x(void) {
   editor_deinit(&editor);
 }
 
+/* Test Ctrl+H opens the file manager from the editor, Ctrl+L closes it */
+void test_ctrl_h_l_window_switch(void) {
+  Editor editor;
+  setup_editor(&editor);
+  editor_create_new_file(&editor);
+
+  TEST_CHECK(editor.state == EditorState_Running);
+
+  // Ctrl+H switches from the editor window to the file manager window
+  editor_process_key(&editor, 8);  // Ctrl+H
+  TEST_CHECK(editor.state == EditorState_FileManager);
+  TEST_CHECK(file_manager_is_visible(editor.file_manager) == true);
+
+  // Ctrl+H again does nothing - already in the leftmost window
+  editor_process_key(&editor, 8);
+  TEST_CHECK(editor.state == EditorState_FileManager);
+
+  // Ctrl+L switches back to the editor window and closes the sidebar
+  editor_process_key(&editor, 12);  // Ctrl+L
+  TEST_CHECK(editor.state == EditorState_Running);
+  TEST_CHECK(file_manager_is_visible(editor.file_manager) == false);
+
+  // Ctrl+L in the editor window does nothing - no window to the right
+  editor_process_key(&editor, 12);
+  TEST_CHECK(editor.state == EditorState_Running);
+  TEST_CHECK(file_manager_is_visible(editor.file_manager) == false);
+
+  editor_deinit(&editor);
+}
+
+/* Test Ctrl+H re-focuses an already-visible sidebar without toggling it */
+void test_ctrl_h_refocuses_visible_sidebar(void) {
+  Editor editor;
+  setup_editor(&editor);
+  editor_create_new_file(&editor);
+
+  // Open the sidebar, then Escape: state is Running but it stays visible
+  editor_process_key(&editor, 2);  // Ctrl+B
+  editor_process_key(&editor, 27); // Escape
+
+  TEST_CHECK(editor.state == EditorState_Running);
+  TEST_CHECK(file_manager_is_visible(editor.file_manager) == true);
+
+  // Ctrl+H moves focus to the file manager without re-toggling visibility
+  editor_process_key(&editor, 8);  // Ctrl+H
+  TEST_CHECK(editor.state == EditorState_FileManager);
+  TEST_CHECK(file_manager_is_visible(editor.file_manager) == true);
+
+  // Ctrl+L closes it and returns to the editor
+  editor_process_key(&editor, 12);  // Ctrl+L
+  TEST_CHECK(editor.state == EditorState_Running);
+  TEST_CHECK(file_manager_is_visible(editor.file_manager) == false);
+
+  editor_deinit(&editor);
+}
+
 /* Test get_cursor_x with file manager offset */
 void test_get_cursor_x_with_offset(void) {
   Editor editor;
@@ -398,6 +454,8 @@ TEST_LIST = {
     {"test_escape_from_file_manager", test_escape_from_file_manager},
     {"test_editor_offset_x", test_editor_offset_x},
     {"test_get_cursor_x_with_offset", test_get_cursor_x_with_offset},
+    {"test_ctrl_h_l_window_switch", test_ctrl_h_l_window_switch},
+    {"test_ctrl_h_refocuses_visible_sidebar", test_ctrl_h_refocuses_visible_sidebar},
 
     {NULL, NULL}
 };

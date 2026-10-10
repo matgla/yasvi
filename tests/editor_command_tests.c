@@ -60,6 +60,7 @@ static inline void window_deinit(MockWindow* window) {
 #include "buffer.h"
 #include "command.h"
 #include "cursor.h"
+#include "help.h"
 #include "search.h"
 
 #undef WINDOW
@@ -564,6 +565,32 @@ void test_editor_tag_without_tags_file(void) {
   tag_fixture_leave(&editor);
 }
 
+void test_editor_command_help_opens_help_buffer(void) {
+  Editor editor;
+  setup_editor(&editor);
+  editor_create_new_file(&editor);
+
+  enter_command(&editor, "help");
+
+  TEST_CHECK(editor.state == EditorState_Running);
+  TEST_CHECK(!editor_should_exit(&editor));
+
+  /* The help buffer is open, current, and named after the pseudo-file. */
+  TEST_CHECK(editor.number_of_buffers == 2);
+  TEST_CHECK(editor.current_buffer_index == 1);
+  TEST_CHECK(strcmp(buffer_get_filename(editor.current_buffer),
+                    HELP_BUFFER_NAME) == 0);
+  TEST_CHECK(buffer_get_number_of_lines(editor.current_buffer) > 1);
+
+  /* :h is the same command and must reuse, not duplicate, the buffer. */
+  enter_command(&editor, "h");
+  TEST_CHECK(editor.number_of_buffers == 2);
+  TEST_CHECK(strcmp(buffer_get_filename(editor.current_buffer),
+                    HELP_BUFFER_NAME) == 0);
+
+  editor_deinit(&editor);
+}
+
 TEST_LIST = {
     {"test_editor_command_quit", test_editor_command_quit},
     {"test_editor_command_invalid", test_editor_command_invalid},
@@ -590,6 +617,9 @@ TEST_LIST = {
     {"test_editor_tag_ctrl_bracket_and_ctrl_t", test_editor_tag_ctrl_bracket_and_ctrl_t},
     {"test_editor_tag_errors", test_editor_tag_errors},
     {"test_editor_tag_without_tags_file", test_editor_tag_without_tags_file},
+
+    {"test_editor_command_help_opens_help_buffer",
+     test_editor_command_help_opens_help_buffer},
 
     {NULL, NULL}
 };

@@ -27,6 +27,7 @@ The project is licensed under GNU General Public License v3.0 (GPL-3.0).
 ├── file_manager.c/h    # File manager sidebar (NERDTree-like)
 ├── window.c/h          # ncurses window initialization and color pairs
 ├── command.c/h         # Command line handling (ex commands)
+├── help.c/h            # :help built-in help text (shown in its own buffer)
 ├── tags.c/h            # ctags "tags" file lookup (Ctrl-], :tag, Ctrl-T)
 ├── completion.c/h      # insert-mode word completion (Ctrl-N / Ctrl-P)
 ├── cursor.h            # Cursor position structure definition
@@ -200,6 +201,9 @@ When file manager sidebar is visible:
 - `k` / `↑`: Move cursor up
 - `h` / `←`: Go to parent directory
 - `l` / `→` / `Enter`: Open file or expand directory
+- `Ctrl-H`: Open the file manager from the editor (vim-style window
+  switch left; `Ctrl-L` inside it closes the sidebar and returns to the
+  editor window). `Ctrl+B` still toggles either way.
 - `Space` / `o`: Toggle directory expand/collapse
 - `Escape`: Return to normal mode
 - `Ctrl+B`: Close file manager sidebar
@@ -235,6 +239,15 @@ following first, wrapping round), then of the other open buffers, then the
 filetype's `completion_words` (keywords and types; Zig adds its `@builtins`,
 and its `word_prefix_chars` "@" lets `@im` complete to `@import`), then names
 from the `tags` file. At most `COMPLETION_MAX_ITEMS` (256).
+
+### Built-in Help (`:help`)
+
+`:help` (also its prefixes `:h`, `:he`, `:hel`) shows the command reference in
+a dedicated buffer named `yasvi-help` — like vim's `:help`, it opens (or
+reuses) that buffer and switches to it, so the help can be scrolled and edited.
+`help.c` owns the text (`g_help_lines`) and builds the buffer
+(`help_alloc_buffer`); `editor.c`'s `editor_show_help` finds an already-open
+help buffer by name and reuses it, never duplicating.
 
 ### Syntax Highlighting
 
