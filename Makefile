@@ -11,6 +11,9 @@ OBJS = $(patsubst %.c, build/%.o, $(SRCS))
 ifeq ($(CC), armv8m-tcc)
 CFLAGS += -I../../rootfs/usr/include
 LDFLAGS += -L../../rootfs/lib -lncurses
+# Its own stack profile: peaks at 10.6 KiB, and waits for the keyboard, so it leaves
+# the fast memory to whatever else runs.
+LDFLAGS += -stack-size=16384 -slow-memory
 else
 CFLAGS += -I../../libs/yasos_curses/include
 LDFLAGS += -L../../libs/yasos_curses/build -Wl,-rpath=$(PWD)/../../libs/yasos_curses/build -lncurses
