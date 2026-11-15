@@ -57,11 +57,39 @@ static const char* g_help_lines[] = {
   "  Ctrl-]         jump to the definition under the cursor",
   "  :tag NAME      jump by name; Ctrl-T or :pop come back",
   "",
+  "Manual pages ($MANPATH, else /usr/share/man)",
+  "  :man NAME      open the page for NAME in a buffer (printf, stdio.h)",
+  "  :man           open the whatis index of every page",
+  "  K              the page for the word under the cursor",
+  "",
+  "Building",
+  "  :make [args]   write modified files, run makeprg args; the output",
+  "                 shows in the terminal and is kept in /tmp/yasvi-make.log",
+  "  :cn :cp        next / previous error or warning from the build",
+  "  :cc [N]        the current (or Nth) error again; :cl shows the log",
+  "  :set           show makeprg and makemode",
+  "  :set makeprg=CMD    the build command (default ./build.sh with bash,",
+  "                      else make when there is a Makefile)",
+  "  :set makemode=wait  vi waits for the build (default)",
+  "  :set makemode=exec  vi exits for the build and comes back after it,",
+  "                      leaving the build all of its RAM",
+  "  .yasvirc (here, else in $HOME) holds the same as lines makeprg=CMD,",
+  "  set makemode=exec, # comments",
+  "",
   "Ex commands",
   "  :w [file]      save, :wq save and quit, :q quit",
   "  :s/old/new/    substitute on this line (g = all of it)",
   "  :%s/old/new/g  substitute in the whole buffer",
   "  :help          show this help again (a buffer you can edit)",
+  "",
+  "Autosave (crash recovery)",
+  "  Edits are copied 2 s after typing stops, or every 200 edits, to",
+  "  .NAME.yasvi-autosave beside the file, or when that directory is",
+  "  read-only to ~/.cache/yasvi/ (then /tmp/yasvi/). :w and quitting",
+  "  delete it, so one found when a file opens was left by a crash:",
+  "  :recover         replace the text with it (then :w to keep it)",
+  "  :delautosave     delete it instead",
+  "  Unnamed buffers go to ~/.cache/yasvi/noname-PID.yasvi-autosave.",
 };
 
 Buffer* help_alloc_buffer() {
@@ -70,6 +98,7 @@ Buffer* help_alloc_buffer() {
     return NULL;
   }
   buffer->filename = strdup(HELP_BUFFER_NAME);
+  buffer->autosave_disabled = true;  // not a file: nothing to recover
   if (buffer->filename == NULL) {
     buffer_free(buffer);
     return NULL;

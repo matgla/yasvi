@@ -108,6 +108,7 @@ typedef struct {
   TagStackEntry tag_stack[EDITOR_TAG_STACK_DEPTH];
   int tag_stack_size;
   void* completion;  // struct Completion*
+  void* make;        // struct MakeState*
 } Editor;
 
 /* Function declarations from editor.c */

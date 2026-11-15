@@ -24,11 +24,15 @@
 
 #include <ncurses.h>
 
+#include "autosave.h"
 #include "command.h"
 #include "completion.h"
 #include "help.h"
 #include "highlight.h"
 #include "file_manager.h"
+#include "make.h"
+#include "man.h"
+#include "run.h"
 #include "search.h"
 #include "tags.h"
 #include "toolbar.h"
@@ -77,6 +81,9 @@ static void editor_complete(Editor* editor, int step);
 static void editor_completion_end(Editor* editor, bool restore);
 static void editor_draw_completion_menu(Editor* editor);
 static bool editor_append_buffer(Editor* editor, Buffer* buffer);
+static bool editor_process_build_command(Editor* editor, CommandResult* result);
+static void editor_man_under_cursor(Editor* editor);
+static void editor_make_state_free(Editor* editor);
 
 #ifdef __GNUC__
 char* itoa(int n, char* s, int base) {
@@ -112,6 +119,11 @@ int editor_get_cursor_x(const Editor* editor) {
 static void editor_home_cursor_x(Editor* editor) {
   editor->cursor.x = editor->number_of_line_digits;
   editor->start_column = 0;
+}
+
+// Every edit of the current buffer's text goes through here (autosave, [+]).
+static void editor_note_change(Editor* editor) {
+  buffer_note_change(editor->current_buffer);
 }
 
 static void editor_mark_dirty_whole_screen(Editor* editor) {
@@ -337,15 +349,38 @@ static CommandResult editor_process_save_command(Editor* editor) {
     return CommandResult_Error;
   }
 
+  bool written = true;
   for (BufferRow* row = buffer_get_first_row(editor->current_buffer); row != NULL;
        row = row->next) {
-    if (row->data) {
-      fprintf(file, "%s\n", row->data);
+    if (row->data && fprintf(file, "%s\n", row->data) < 0) {
+      written = false;
     }
   }
 
-  fclose(file);
-  editor_set_error_message(editor, "File saved successfully");
+  if (fclose(file) != 0 || !written) {
+    // The autosave stays: it may now be the only whole copy.
+    editor_set_error_message(editor, "Failed to write file");
+    return CommandResult_Error;
+  }
+
+  Buffer* buffer = editor->current_buffer;
+  const char* own = buffer_get_filename(buffer);
+  if (own == NULL) {
+    // ":w name" names an unnamed buffer, as in vim.
+    size_t length = strlen(filename) + 1;
+    buffer->filename = malloc(length);
+    if (buffer->filename != NULL) {
+      memcpy(buffer->filename, filename, length);
+    }
+    own = buffer->filename;
+  }
+  if (own != NULL && strcmp(own, filename) == 0) {
+    buffer_mark_saved(buffer);
+    autosave_remove(buffer);
+  }
+  editor_set_error_message(editor, buffer->stale_autosave != NULL
+                                     ? "Saved; an older autosave is kept: :delautosave"
+                                     : "File saved successfully");
   return should_exit ? CommandResult_ShouldExit : CommandResult_Success;
 }
 
@@ -414,6 +449,12 @@ static CommandResult editor_process_command(Editor* editor) {
     return CommandResult_Success;
   }
 
+  // :man, :make, :set, :cn/:cp/:cc/:cl -- before :s, which takes any 's'
+  CommandResult build_result;
+  if (editor_process_build_command(editor, &build_result)) {
+    return build_result;
+  }
+
   // Handle substitution commands: :s/old/new/flags
   if (command->buffer[0] == 's') {
     // Parse substitution pattern: s/pattern/replacement/flags
@@ -477,6 +518,7 @@ static CommandResult editor_process_command(Editor* editor) {
       static char msg[64];
       snprintf(msg, sizeof(msg), "Replaced %d occurrence(s)",
                result.replacements);
+      editor_note_change(editor);
       editor_set_error_message(editor, msg);
       editor_mark_dirty_from_cursor(editor);
     } else {
@@ -548,6 +590,7 @@ static CommandResult editor_process_command(Editor* editor) {
       static char msg[64];
       snprintf(msg, sizeof(msg), "Replaced %d occurrence(s) in %d line(s)",
                result.replacements, result.lines_affected);
+      editor_note_change(editor);
       editor_set_error_message(editor, msg);
       editor_mark_dirty_whole_screen(editor);
     } else {
@@ -556,6 +599,34 @@ static CommandResult editor_process_command(Editor* editor) {
 
     free(pattern);
     free(replacement);
+    return CommandResult_Success;
+  }
+
+  // :recover -- take the text an autosave left by a crash kept
+  if (strcmp(command->buffer, "rec") == 0 || strcmp(command->buffer, "recover") == 0) {
+    if (editor->current_buffer == NULL ||
+        editor->current_buffer->stale_autosave == NULL) {
+      editor_set_error_message(editor, "No autosave to recover");
+      return CommandResult_Error;
+    }
+    if (!autosave_recover(editor->current_buffer)) {
+      editor_set_error_message(editor, "Cannot read the autosave");
+      return CommandResult_Error;
+    }
+    editor->start_line = 0;
+    editor->start_column = 0;
+    editor_home_cursor_xy(editor);
+    editor_mark_dirty_whole_screen(editor);
+    editor_set_error_message(editor, "Recovered; :w keeps it");
+    return CommandResult_Success;
+  }
+  // :delautosave -- drop that autosave instead
+  if (strcmp(command->buffer, "delautosave") == 0) {
+    if (!autosave_discard(editor->current_buffer)) {
+      editor_set_error_message(editor, "No autosave to delete");
+      return CommandResult_Error;
+    }
+    editor_set_error_message(editor, "Autosave deleted");
     return CommandResult_Success;
   }
 
@@ -864,6 +935,10 @@ static void editor_process_editor_key(Editor* editor, int key) {
       editor_pop_tag(editor);
       return;
     }
+    case 'K': {  // the man page of the word under the cursor, as in vim
+      editor_man_under_cursor(editor);
+      return;
+    }
     case 'g': {
       editor->key_sequence[0] = 'g';
       return;
@@ -875,6 +950,7 @@ static void editor_process_editor_key(Editor* editor, int key) {
     case 'x': {
       BufferRow* current_row = buffer_get_current_line(editor->current_buffer);
       if (buffer_row_remove_char(current_row, editor_get_cursor_x(editor))) {
+        editor_note_change(editor);
         editor_fix_cursor_position(editor);
       }
       return;
@@ -1115,6 +1191,7 @@ static void editor_process_dkey_sequence(Editor* editor, int key) {
           editor_move_cursor_y(editor, -1);
         }
       }
+      editor_note_change(editor);
       editor_mark_dirty_from_cursor(editor);
     } break;
     case 'w': {
@@ -1124,6 +1201,7 @@ static void editor_process_dkey_sequence(Editor* editor, int key) {
       if (offset_to_word > 0) {
         buffer_row_remove_chars(current_row, editor_get_cursor_x(editor),
                                 offset_to_word);
+        editor_note_change(editor);
       }
     } break;
     case 'e': {
@@ -1133,6 +1211,7 @@ static void editor_process_dkey_sequence(Editor* editor, int key) {
       if (offset_to_end > 0) {
         buffer_row_remove_chars(current_row, editor_get_cursor_x(editor),
                                 offset_to_end + 1);  // +1 to include current char
+        editor_note_change(editor);
       }
     } break;
   }
@@ -1193,6 +1272,7 @@ static void editor_completion_replace(Editor* editor, const char* text) {
   }
   editor_move_cursor_x(editor, length - completion->inserted_len, true);
   completion->inserted_len = length;
+  editor_note_change(editor);
 }
 
 // Ctrl-N (step +1) / Ctrl-P (step -1) in insert mode: the first press
@@ -1374,10 +1454,13 @@ void editor_insert_char(Editor* editor, int key) {
       // Handle backspace
       if (editor->cursor.x > editor->number_of_line_digits) {
         editor_move_cursor_x(editor, -1, true);
-        buffer_row_remove_char(current_row, editor_get_cursor_x(editor));
+        if (buffer_row_remove_char(current_row, editor_get_cursor_x(editor))) {
+          editor_note_change(editor);
+        }
       } else if (editor->cursor.x == editor->number_of_line_digits) {
         int chars = buffer_join_current_line_with_previous(editor->current_buffer);
         if (chars > 0) {
+          editor_note_change(editor);
           editor_move_cursor_y(editor, -1);
           editor_move_cursor_x(editor, editor->current_buffer->current_row->len,
                                false);
@@ -1389,6 +1472,7 @@ void editor_insert_char(Editor* editor, int key) {
     case '\n': {
       editor_mark_dirty_from_cursor(editor);
       buffer_break_current_line(editor->current_buffer, editor_get_cursor_x(editor));
+      editor_note_change(editor);
       editor_move_cursor_y(editor, 1);
       editor_home_cursor_x(editor);
       buffer_scroll_rows(editor->current_buffer, 1);
@@ -1400,10 +1484,12 @@ void editor_insert_char(Editor* editor, int key) {
         buffer_row_insert_char(current_row, editor_get_cursor_x(editor), ' ');
         editor_move_cursor_x(editor, 1, true);
       }
+      editor_note_change(editor);
       return;
     }
     default: {
       buffer_row_insert_char(current_row, editor_get_cursor_x(editor), (char)key);
+      editor_note_change(editor);
       editor_move_cursor_x(editor, 1, true);
     }
   };
@@ -1732,6 +1818,8 @@ void editor_deinit(Editor* editor) {
     editor->completion = NULL;
   }
   for (size_t i = 0; i < editor->number_of_buffers; ++i) {
+    // A clean exit: what is unsaved was given up (as vim drops its .swp).
+    autosave_remove(editor->buffers[i]);
     buffer_free(editor->buffers[i]);
   }
   free(editor->buffers);
@@ -1761,6 +1849,7 @@ void editor_deinit(Editor* editor) {
     free(editor->tag_stack[i].filename);
   }
   editor->tag_stack_size = 0;
+  editor_make_state_free(editor);
   // Clean up search state
   search_deinit(&editor->search);
   if (editor->search_buffer.buffer != NULL) {
@@ -1796,6 +1885,50 @@ void editor_toggle_file_manager(Editor* editor) {
   // Ensure cursor stays within valid bounds
   if (editor->cursor.x < editor->number_of_line_digits) {
     editor->cursor.x = editor->number_of_line_digits;
+  }
+}
+
+// After loading a file: an autosave a crash left for it is announced, and
+// waits for :recover or :delautosave (until then the buffer gets none).
+static void editor_check_autosave(Editor* editor, Buffer* buffer) {
+  if (autosave_check_stale(buffer)) {
+    editor_set_error_message(editor,
+                             "Autosave found: :recover restores, :delautosave drops");
+  }
+}
+
+void editor_autosave_tick(Editor* editor, long long now_ms) {
+  for (size_t i = 0; i < editor->number_of_buffers; ++i) {
+    Buffer* buffer = editor->buffers[i];
+    if (buffer->autosave_disabled || buffer->stale_autosave != NULL ||
+        buffer->changes == buffer->autosaved_changes) {
+      continue;
+    }
+    if (buffer->changes != buffer->observed_changes) {
+      buffer->observed_changes = buffer->changes;
+      buffer->observed_at_ms = now_ms;
+    }
+    if (now_ms - buffer->observed_at_ms < AUTOSAVE_IDLE_MS &&
+        buffer->changes - buffer->autosaved_changes < AUTOSAVE_MAX_PENDING) {
+      continue;
+    }
+    if (!autosave_write(buffer)) {
+      // Try again after the next edit, not on every pass of the main loop.
+      buffer->autosaved_changes = buffer->changes;
+      editor_set_error_message(editor, "Autosave failed: no writable directory");
+    }
+  }
+}
+
+void editor_idle(Editor* editor) {
+  for (size_t i = 0; i < editor->number_of_buffers; ++i) {
+    const Buffer* buffer = editor->buffers[i];
+    if (!buffer->autosave_disabled && buffer->stale_autosave == NULL &&
+        buffer->changes != buffer->autosaved_changes) {
+      // Only read the clock when something waits for an autosave.
+      editor_autosave_tick(editor, autosave_now_ms());
+      return;
+    }
   }
 }
 
@@ -1851,6 +1984,7 @@ void editor_file_manager_select(Editor* editor) {
       editor->current_buffer = buffer;
       editor->current_buffer_index = editor->number_of_buffers - 1;
       editor_set_error_message(editor, "Loaded file");
+      editor_check_autosave(editor, buffer);
     }
 
     // Reset view to top of file
@@ -1885,6 +2019,7 @@ void editor_load_file(Editor* editor, const char* filename) {
     editor->current_buffer = buffer;
     editor->current_buffer_index = 0;
   }
+  editor_check_autosave(editor, buffer);
 }
 
 void editor_create_new_file(Editor* editor) {
@@ -1954,6 +2089,7 @@ void editor_close_current_buffer(Editor* editor) {
   }
 
   // Free the current buffer
+  autosave_remove(editor->buffers[editor->current_buffer_index]);
   buffer_free(editor->buffers[editor->current_buffer_index]);
 
   // Shift remaining buffers down
@@ -2143,6 +2279,7 @@ static bool editor_open_path(Editor* editor, const char* path) {
     return false;
   }
   editor_switch_to_buffer_by_index(editor, editor->number_of_buffers - 1);
+  editor_check_autosave(editor, buffer);
   return true;
 }
 
@@ -2250,4 +2387,683 @@ bool editor_pop_tag(Editor* editor) {
   }
   free(entry.filename);
   return opened;
+}
+
+// ============================================================================
+// :man and K
+// ============================================================================
+
+// A message for the status bar as it is, without the ": 'command'" that
+// editor_set_error_message appends while a command runs.
+static void editor_set_status_message(Editor* editor, const char* message) {
+  editor_clear_error_message(editor);
+  const size_t length = strlen(message);
+  editor->error_message = (char*)malloc(length + 1);
+  if (editor->error_message != NULL) {
+    memcpy(editor->error_message, message, length + 1);
+  }
+  editor_redraw_screen(editor);
+}
+
+static bool editor_switch_to_buffer(Editor* editor, const Buffer* buffer) {
+  for (size_t i = 0; i < editor->number_of_buffers; ++i) {
+    if (editor->buffers[i] == buffer) {
+      editor_switch_to_buffer_by_index(editor, i);
+      return true;
+    }
+  }
+  return false;
+}
+
+// Shows `path` in a buffer that is not autosaved (a man page, the build log).
+// An open buffer of that file is switched to; with `reload` its text is read
+// again first (the log changes with every build).
+static bool editor_open_view(Editor* editor, const char* path, bool reload) {
+  FILE* probe = fopen(path, "r");
+  if (probe == NULL) {
+    editor_set_status_message(editor, "Cannot read the file");
+    return false;
+  }
+  fclose(probe);
+  Buffer* existing = editor_find_buffer_by_filename(editor, path);
+  if (existing != NULL && !reload) {
+    return editor_switch_to_buffer(editor, existing);
+  }
+  Buffer* buffer = buffer_alloc();
+  if (buffer == NULL) {
+    editor_set_error_message(editor, "Failed to allocate memory for buffer");
+    return false;
+  }
+  buffer_load_from_file(buffer, path);
+  buffer->autosave_disabled = true;  // a view: nothing to recover
+  if (existing != NULL) {
+    for (size_t i = 0; i < editor->number_of_buffers; ++i) {
+      if (editor->buffers[i] == existing) {
+        editor->buffers[i] = buffer;
+        if (editor->current_buffer == existing) {
+          editor->current_buffer = buffer;
+        }
+        autosave_remove(existing);
+        buffer_free(existing);
+        editor_switch_to_buffer_by_index(editor, i);
+        return true;
+      }
+    }
+  }
+  if (!editor_append_buffer(editor, buffer)) {
+    buffer_free(buffer);
+    return false;
+  }
+  editor_switch_to_buffer_by_index(editor, editor->number_of_buffers - 1);
+  return true;
+}
+
+// :man NAME (NULL or "": the whatis index), from $MANPATH.
+static bool editor_show_man(Editor* editor, const char* name) {
+  const char* manpath = getenv("MANPATH");
+  char message[96];
+  if (name == NULL || name[0] == '\0') {
+    char* whatis = man_find_whatis(manpath);
+    if (whatis == NULL) {
+      editor_set_status_message(editor, "No whatis index in MANPATH");
+      return false;
+    }
+    const bool shown = editor_open_view(editor, whatis, false);
+    free(whatis);
+    return shown;
+  }
+  ManPage page;
+  if (!man_locate(manpath, name, &page)) {
+    snprintf(message, sizeof(message), "No manual entry for %s", name);
+    editor_set_status_message(editor, message);
+    return false;
+  }
+  if (page.offset < 0 && !man_is_gzipped(page.file)) {
+    const bool shown = editor_open_view(editor, page.file, false);
+    man_page_free(&page);
+    return shown;
+  }
+  // A gzipped or packed page is read from a copy in /tmp, and the buffer is
+  // named after that copy: the next :man of the page finds it open.
+  char* copy = man_temp_path(MAN_TEMP_DIR, page.name);
+  if (copy == NULL) {
+    man_page_free(&page);
+    editor_set_error_message(editor, "Out of memory");
+    return false;
+  }
+  Buffer* existing = editor_find_buffer_by_filename(editor, copy);
+  bool shown = false;
+  if (existing != NULL) {
+    shown = editor_switch_to_buffer(editor, existing);
+  } else {
+    // A packed page: xzcat unpacks its ~64 KB block, man_cut keeps the page.
+    static const char* const zcats[] = {"/bin/zcat", "/usr/bin/zcat"};
+    static const char* const xzcats[] = {"/bin/xzcat", "/usr/bin/xzcat"};
+    const bool packed = page.offset >= 0;
+    const char* const* tools = packed ? xzcats : zcats;
+    int status = -1;
+    for (size_t i = 0; i < 2; ++i) {
+      status = run_to_file(tools[i], page.file, copy);
+      if (status != 127 && status != -1) {
+        break;  // ran (127: no such tool, try the next)
+      }
+    }
+    if (status == 0 && (!packed || man_cut(copy, page.offset, page.length))) {
+      shown = editor_open_view(editor, copy, false);
+    } else {
+      remove(copy);
+      snprintf(message, sizeof(message), "Cannot unpack the page for %s (%s)", name,
+               packed ? "xzcat" : "zcat");
+      editor_set_status_message(editor, message);
+    }
+  }
+  free(copy);
+  man_page_free(&page);
+  return shown;
+}
+
+static bool editor_is_man_word_char(char c) {
+  return editor_is_identifier_char(c) || c == '.' || c == '/' || c == '-';
+}
+
+// The word under the cursor for K: an identifier, also taking '.', '/' and '-'
+// so stdio.h and sys/stat.h are one word. Leading and trailing punctuation is
+// dropped ("printf." at the end of a sentence). malloc'd, or NULL.
+static char* editor_man_word_under_cursor(Editor* editor) {
+  const BufferRow* row = buffer_get_current_line(editor->current_buffer);
+  const int x = editor_get_cursor_x(editor);
+  if (row == NULL || x < 0 || x >= row->len ||
+      !editor_is_man_word_char(row->data[x])) {
+    return NULL;
+  }
+  int start = x;
+  int end = x;
+  while (start > 0 && editor_is_man_word_char(row->data[start - 1])) {
+    --start;
+  }
+  while (end < row->len && editor_is_man_word_char(row->data[end])) {
+    ++end;
+  }
+  while (start < end && !editor_is_identifier_char(row->data[start])) {
+    ++start;
+  }
+  while (end > start && !editor_is_identifier_char(row->data[end - 1])) {
+    --end;
+  }
+  if (start == end) {
+    return NULL;
+  }
+  char* word = (char*)malloc((size_t)(end - start) + 1);
+  if (word != NULL) {
+    memcpy(word, &row->data[start], (size_t)(end - start));
+    word[end - start] = '\0';
+  }
+  return word;
+}
+
+// K: the man page of the word under the cursor. The wide word (stdio.h) is
+// tried first; when it has no page the identifier alone (a in a.b) is.
+static void editor_man_under_cursor(Editor* editor) {
+  char* wide = editor_man_word_under_cursor(editor);
+  char* narrow = editor_word_under_cursor(editor);
+  const char* name = wide != NULL ? wide : narrow;
+  if (name == NULL) {
+    editor_set_status_message(editor, "No word under cursor");
+    return;
+  }
+  if (wide != NULL && narrow != NULL && strcmp(wide, narrow) != 0) {
+    char* page = man_find_page(getenv("MANPATH"), wide);
+    if (page == NULL) {
+      name = narrow;
+    }
+    free(page);
+  }
+  editor_show_man(editor, name);
+  free(wide);
+  free(narrow);
+}
+
+// ============================================================================
+// :make, :set and the error list (:cn :cp :cc :cl)
+// ============================================================================
+
+static MakeState* editor_make_state(Editor* editor) {
+  if (editor->make == NULL) {
+    MakeState* state = (MakeState*)calloc(1, sizeof(MakeState));
+    if (state == NULL) {
+      return NULL;
+    }
+    make_config_init(&state->config);
+    state->errors.current = -1;
+    editor->make = state;
+  }
+  return editor->make;
+}
+
+static void editor_make_state_free(Editor* editor) {
+  MakeState* state = editor->make;
+  if (state == NULL) {
+    return;
+  }
+  make_config_deinit(&state->config);
+  make_error_list_clear(&state->errors);
+  free(state->log_path);
+  free(state->program_path);
+  free(state);
+  editor->make = NULL;
+}
+
+static char* editor_strdup(const char* text) {
+  const size_t length = strlen(text) + 1;
+  char* copy = (char*)malloc(length);
+  if (copy != NULL) {
+    memcpy(copy, text, length);
+  }
+  return copy;
+}
+
+void editor_set_program_path(Editor* editor, const char* path) {
+  MakeState* state = editor_make_state(editor);
+  if (state == NULL || path == NULL) {
+    return;
+  }
+  free(state->program_path);
+  state->program_path = editor_strdup(path);
+}
+
+void editor_load_config(Editor* editor) {
+  MakeState* state = editor_make_state(editor);
+  if (state == NULL) {
+    return;
+  }
+  int bad_lines = 0;
+  char* path =
+    make_config_load_default(&state->config, NULL, getenv("HOME"), &bad_lines);
+  if (path != NULL && bad_lines > 0 && editor->error_message == NULL) {
+    // Shown by the first redraw; called before any buffer exists, so it is
+    // set here rather than drawn.
+    char message[128];
+    snprintf(message, sizeof(message), "%s: %d line(s) not understood", path,
+             bad_lines);
+    editor->error_message = editor_strdup(message);
+  }
+  free(path);
+}
+
+// Writes the buffer to its own file, as :w does.
+static bool editor_write_buffer_file(Buffer* buffer) {
+  FILE* file = fopen(buffer->filename, "w");
+  if (file == NULL) {
+    return false;
+  }
+  bool written = true;
+  for (BufferRow* row = buffer_get_first_row(buffer); row != NULL; row = row->next) {
+    if (row->data && fprintf(file, "%s\n", row->data) < 0) {
+      written = false;
+    }
+  }
+  if (fclose(file) != 0 || !written) {
+    return false;
+  }
+  buffer_mark_saved(buffer);
+  autosave_remove(buffer);
+  return true;
+}
+
+// :make's autowrite: every modified buffer with a filename that is a file
+// (not a view). The names written go to `written`, space-separated. False
+// when one could not be written; its name is then in `failed`.
+static bool editor_autowrite(Editor* editor,
+                             char* written,
+                             size_t written_size,
+                             const char** failed) {
+  written[0] = '\0';
+  for (size_t i = 0; i < editor->number_of_buffers; ++i) {
+    Buffer* buffer = editor->buffers[i];
+    if (buffer->filename == NULL || buffer->autosave_disabled ||
+        !buffer_is_modified(buffer)) {
+      continue;
+    }
+    if (!editor_write_buffer_file(buffer)) {
+      *failed = buffer->filename;
+      return false;
+    }
+    const size_t used = strlen(written);
+    snprintf(written + used, written_size - used, "%s%s", used > 0 ? " " : "",
+             buffer->filename);
+  }
+  return true;
+}
+
+// Back from the terminal: curses starts again and every row is drawn.
+static void editor_resume_screen(Editor* editor) {
+  window_init(&editor->window);
+  editor_mark_dirty_whole_screen(editor);
+}
+
+static void editor_print_build_start(const char* written, const char* command_line) {
+  if (written[0] != '\0') {
+    printf("wrote %s\n", written);
+  }
+  printf("%s\n", command_line);
+  fflush(stdout);
+}
+
+// makemode=wait: vi stays in waitpid (where the kernel can swap it out)
+// while the build has the terminal.
+static int editor_run_build_wait(Editor* editor,
+                                 const char* written,
+                                 const char* command_line,
+                                 const char* script) {
+  endwin();
+  editor_print_build_start(written, command_line);
+  int status = run_shell_wait(script);
+  if (status < 0) {
+    printf("cannot run %s\n", MAKE_SHELL);
+  } else {
+    status = make_read_status(MAKE_LOG_PATH);  // the build's, not tee's
+  }
+  printf("\n[build exited %d] press Enter", status);
+  fflush(stdout);
+  run_wait_for_enter();
+  editor_resume_screen(editor);
+  return status;
+}
+
+// makemode=exec: the session goes to MAKE_SESSION_PATH and vi becomes the
+// build; the script runs vi -S afterwards. Returns only on failure.
+static void editor_run_build_exec(Editor* editor,
+                                  MakeState* state,
+                                  const char* written,
+                                  const char* command_line,
+                                  const char* program,
+                                  const char* args) {
+  MakeSession session = {NULL, 0, 0};
+  for (size_t i = 0; i < editor->number_of_buffers; ++i) {
+    Buffer* buffer = editor->buffers[i];
+    if (buffer->filename == NULL ||
+        strcmp(buffer->filename, HELP_BUFFER_NAME) == 0) {
+      continue;
+    }
+    const bool is_current = buffer == editor->current_buffer;
+    if (is_current) {
+      session.current = session.count;
+    }
+    make_session_add(
+      &session, buffer->filename, buffer_get_current_line_number(buffer) - 1,
+      is_current ? editor_get_cursor_x(editor) : 0, buffer->autosave_disabled);
+  }
+  const bool saved = make_session_write(MAKE_SESSION_PATH, &session, &state->config);
+  make_session_clear(&session);
+  if (!saved) {
+    editor_set_status_message(editor, "Cannot write " MAKE_SESSION_PATH);
+    return;
+  }
+  const char* vi_path =
+    state->program_path != NULL && strchr(state->program_path, '/') != NULL
+      ? state->program_path
+      : "vi";
+  char* script =
+    make_build_exec_script(program, args, MAKE_LOG_PATH, vi_path, MAKE_SESSION_PATH);
+  if (script == NULL) {
+    editor_set_error_message(editor, "Out of memory");
+    return;
+  }
+  endwin();
+  editor_print_build_start(written, command_line);
+  remove(MAKE_LOG_PATH MAKE_RC_SUFFIX);
+  run_shell_exec(script);
+  free(script);
+  remove(MAKE_SESSION_PATH);
+  editor_resume_screen(editor);
+  editor_set_status_message(editor, "Cannot exec " MAKE_SHELL);
+}
+
+static bool editor_goto_error(Editor* editor, int index) {
+  MakeState* state = editor->make;
+  if (state == NULL || index < 0 || index >= state->errors.count) {
+    return false;
+  }
+  const MakeError* error = &state->errors.items[index];
+  char message[256];
+  FILE* probe = fopen(error->filename, "r");
+  if (probe == NULL) {
+    snprintf(message, sizeof(message), "Cannot open %s", error->filename);
+    editor_set_status_message(editor, message);
+    return false;
+  }
+  fclose(probe);
+  if (!editor_open_path(editor, error->filename)) {
+    return false;
+  }
+  state->errors.current = index;
+  int line = error->line - 1;
+  const int last = buffer_get_number_of_lines(editor->current_buffer) - 1;
+  if (line > last) {
+    line = last;
+  }
+  editor_goto_position(editor, line < 0 ? 0 : line,
+                       error->column > 0 ? error->column - 1 : 0);
+  const int used =
+    snprintf(message, sizeof(message), "(%d of %d) ", index + 1, state->errors.count);
+  make_error_format(error, message + used, sizeof(message) - (size_t)used);
+  editor_set_status_message(editor, message);
+  return true;
+}
+
+void editor_make_report(Editor* editor, const char* log_path, int status) {
+  MakeState* state = editor_make_state(editor);
+  if (state == NULL) {
+    return;
+  }
+  free(state->log_path);
+  state->log_path = editor_strdup(log_path);
+  make_parse_log(log_path, &state->errors);
+  const MakeErrorList* errors = &state->errors;
+  const int warnings = errors->count - errors->errors;
+  char summary[96];
+  if (status == 0) {
+    snprintf(summary, sizeof(summary), "build ok");
+  } else if (status < 0) {
+    snprintf(summary, sizeof(summary), "build failed (not started)");
+  } else {
+    snprintf(summary, sizeof(summary), "build failed (exit %d), %d error%s", status,
+             errors->errors, errors->errors == 1 ? "" : "s");
+  }
+  if (warnings > 0) {
+    const size_t used = strlen(summary);
+    snprintf(summary + used, sizeof(summary) - used, ", %d warning%s", warnings,
+             warnings == 1 ? "" : "s");
+  }
+  int first_error = -1;
+  for (int i = 0; i < errors->count; ++i) {
+    if (!errors->items[i].is_warning) {
+      first_error = i;
+      break;
+    }
+  }
+  if (first_error < 0 || !editor_goto_error(editor, first_error)) {
+    editor_set_status_message(editor, summary);
+    return;
+  }
+  // The jump shows the error; the summary goes in front of it.
+  char message[256];
+  const int used = snprintf(message, sizeof(message), "%s: ", summary);
+  make_error_format(&errors->items[first_error], message + used,
+                    sizeof(message) - (size_t)used);
+  editor_set_status_message(editor, message);
+}
+
+static CommandResult editor_make(Editor* editor, const char* args) {
+  MakeState* state = editor_make_state(editor);
+  if (state == NULL) {
+    editor_set_error_message(editor, "Out of memory");
+    return CommandResult_Error;
+  }
+  char* program = make_resolve_program(&state->config, NULL);
+  if (program == NULL) {
+    editor_set_status_message(editor,
+                              "No build.sh or Makefile: :set makeprg=CMD "
+                              "or makeprg=CMD in .yasvirc");
+    return CommandResult_Error;
+  }
+  if (state->config.mode == MakeMode_Exec) {
+    for (size_t i = 0; i < editor->number_of_buffers; ++i) {
+      if (editor->buffers[i]->filename == NULL &&
+          buffer_is_modified(editor->buffers[i])) {
+        free(program);
+        editor_set_status_message(editor,
+                                  "Unnamed buffer modified: :w NAME first "
+                                  "(makemode=exec restarts vi)");
+        return CommandResult_Error;
+      }
+    }
+  }
+  char written[256];
+  const char* failed = NULL;
+  if (!editor_autowrite(editor, written, sizeof(written), &failed)) {
+    char message[160];
+    snprintf(message, sizeof(message), "Cannot write %s; build not started", failed);
+    free(program);
+    editor_set_status_message(editor, message);
+    return CommandResult_Error;
+  }
+  char* script = make_build_script(program, args, MAKE_LOG_PATH);
+  // What is printed before the build: the command as the user knows it.
+  const size_t command_size = strlen(program) + strlen(args) + 2;
+  char* command_line = (char*)malloc(command_size);
+  if (script == NULL || command_line == NULL) {
+    free(program);
+    free(script);
+    free(command_line);
+    editor_set_error_message(editor, "Out of memory");
+    return CommandResult_Error;
+  }
+  snprintf(command_line, command_size, "%s%s%s", program, args[0] ? " " : "", args);
+  if (state->config.mode == MakeMode_Exec) {
+    editor_run_build_exec(editor, state, written, command_line, program, args);
+    free(program);
+    free(script);
+    free(command_line);
+    return CommandResult_Error;  // still here: the exec failed
+  }
+  const int status = editor_run_build_wait(editor, written, command_line, script);
+  free(program);
+  free(script);
+  free(command_line);
+  editor_make_report(editor, MAKE_LOG_PATH, status);
+  return CommandResult_Success;
+}
+
+// :set (show), :set key=value, :set key (show)
+static CommandResult editor_set_option(Editor* editor, const char* args) {
+  MakeState* state = editor_make_state(editor);
+  if (state == NULL) {
+    editor_set_error_message(editor, "Out of memory");
+    return CommandResult_Error;
+  }
+  switch (make_config_set(&state->config, args)) {
+    case MakeSet_UnknownKey:
+      editor_set_error_message(editor, "Unknown option (makeprg, makemode)");
+      return CommandResult_Error;
+    case MakeSet_BadValue:
+      editor_set_error_message(editor, "makemode is wait or exec");
+      return CommandResult_Error;
+    case MakeSet_NoMemory:
+      editor_set_error_message(editor, "Out of memory");
+      return CommandResult_Error;
+    default:
+      break;
+  }
+  char description[192];
+  make_config_describe(&state->config, NULL, description, sizeof(description));
+  editor_set_status_message(editor, description);
+  return CommandResult_Success;
+}
+
+// :cn :cp :cc [N]
+static CommandResult editor_step_error(Editor* editor, int step, const char* args) {
+  MakeState* state = editor->make;
+  if (state == NULL || state->errors.count == 0) {
+    editor_set_status_message(editor, "No errors (run :make)");
+    return CommandResult_Error;
+  }
+  int index = state->errors.current < 0 ? 0 : state->errors.current;
+  if (step == 0 && args != NULL && args[0] >= '1' && args[0] <= '9') {
+    index = atoi(args) - 1;
+  } else if (state->errors.current >= 0 || step < 0) {
+    index += step;
+  }
+  if (index >= state->errors.count) {
+    editor_set_status_message(editor, "No more errors");
+    return CommandResult_Error;
+  }
+  if (index < 0) {
+    editor_set_status_message(editor, "Already at the first error");
+    return CommandResult_Error;
+  }
+  return editor_goto_error(editor, index) ? CommandResult_Success
+                                          : CommandResult_Error;
+}
+
+// The argument of `name` in the command line: "" for the bare command, the
+// text after the spaces for "name ARGS", NULL when the line is another command.
+static const char* editor_command_argument(const char* line, const char* name) {
+  const size_t length = strlen(name);
+  if (strncmp(line, name, length) != 0) {
+    return NULL;
+  }
+  const char* rest = line + length;
+  if (*rest == '\0') {
+    return rest;
+  }
+  if (*rest != ' ') {
+    return NULL;
+  }
+  while (*rest == ' ') {
+    ++rest;
+  }
+  return rest;
+}
+
+// :man, :make, :set and the error list. False when the line is none of them.
+static bool editor_process_build_command(Editor* editor, CommandResult* result) {
+  const char* line = editor->command.buffer;
+  const char* args;
+  if ((args = editor_command_argument(line, "man")) != NULL) {
+    *result =
+      editor_show_man(editor, args) ? CommandResult_Success : CommandResult_Error;
+    return true;
+  }
+  if ((args = editor_command_argument(line, "make")) != NULL) {
+    *result = editor_make(editor, args);
+    return true;
+  }
+  if ((args = editor_command_argument(line, "set")) != NULL) {
+    *result = editor_set_option(editor, args);
+    return true;
+  }
+  if ((args = editor_command_argument(line, "cn")) != NULL ||
+      (args = editor_command_argument(line, "cnext")) != NULL) {
+    *result = editor_step_error(editor, 1, args);
+    return true;
+  }
+  if ((args = editor_command_argument(line, "cp")) != NULL ||
+      (args = editor_command_argument(line, "cprevious")) != NULL) {
+    *result = editor_step_error(editor, -1, args);
+    return true;
+  }
+  if ((args = editor_command_argument(line, "cc")) != NULL) {
+    *result = editor_step_error(editor, 0, args);
+    return true;
+  }
+  if ((args = editor_command_argument(line, "cl")) != NULL ||
+      (args = editor_command_argument(line, "clist")) != NULL) {
+    const char* log = editor->make != NULL && editor->make->log_path != NULL
+                        ? editor->make->log_path
+                        : MAKE_LOG_PATH;
+    *result = editor_open_view(editor, log, true) ? CommandResult_Success
+                                                  : CommandResult_Error;
+    return true;
+  }
+  return false;
+}
+
+bool editor_restore_session(Editor* editor, const char* path) {
+  MakeState* state = editor_make_state(editor);
+  if (state == NULL) {
+    return false;
+  }
+  MakeSession session = {NULL, 0, 0};
+  if (!make_session_read(path, &session, &state->config)) {
+    return false;
+  }
+  remove(path);
+  const size_t first = editor->number_of_buffers;
+  for (int i = 0; i < session.count; ++i) {
+    const size_t before = editor->number_of_buffers;
+    editor_load_file(editor, session.files[i].path);
+    if (editor->number_of_buffers > before) {
+      editor->buffers[before]->autosave_disabled =
+        session.files[i].autosave_disabled;
+    }
+  }
+  if (editor->number_of_buffers == first) {
+    editor_create_new_file(editor);
+  } else if (session.current < session.count &&
+             first + (size_t)session.current < editor->number_of_buffers) {
+    const MakeSessionFile* current = &session.files[session.current];
+    editor_switch_to_buffer_by_index(editor, first + (size_t)session.current);
+    int line = current->line;
+    const int last = buffer_get_number_of_lines(editor->current_buffer) - 1;
+    if (line > last) {
+      line = last;
+    }
+    editor_goto_position(editor, line < 0 ? 0 : line, current->column);
+  }
+  make_session_clear(&session);
+  const int status = make_read_status(MAKE_LOG_PATH);
+  remove(MAKE_LOG_PATH MAKE_RC_SUFFIX);
+  editor_make_report(editor, MAKE_LOG_PATH, status);
+  return true;
 }

@@ -30,6 +30,11 @@ The project is licensed under GNU General Public License v3.0 (GPL-3.0).
 ├── help.c/h            # :help built-in help text (shown in its own buffer)
 ├── tags.c/h            # ctags "tags" file lookup (Ctrl-], :tag, Ctrl-T)
 ├── completion.c/h      # insert-mode word completion (Ctrl-N / Ctrl-P)
+├── autosave.c/h        # crash-recovery autosave, :recover / :delautosave
+├── man.c/h             # :man / K manual page lookup (MANPATH, aliases, .gz)
+├── make.c/h            # :make settings (.yasvirc, :set), script, error list,
+│                       # makemode=exec session file
+├── run.c/h             # vfork/execve/waitpid for :make, zcat and xzcat
 ├── cursor.h            # Cursor position structure definition
 ├── highlight.h         # Syntax highlighting token types enum
 ├── filetypes/          # File type specific configurations
@@ -139,6 +144,8 @@ cd tests && make run
 
 - `buffer_tests.c`: Tests for buffer allocation, row operations, character manipulation, and word navigation
 - `command_tests.c`: Basic tests for command buffer operations
+- `man_tests.c`: `:man` page lookup, `:man` and `K`
+- `make_tests.c`: `:make` settings, scripts, error list, session, `-S`
 
 ### Adding New Tests
 
@@ -191,7 +198,8 @@ clang-format -i editor.c
 
 - Navigation: `h`, `j`, `k`, `l`, `w`, `b`, `0`, `$`, `gg`, `G`
 - Editing: `i`, `a`, `o`, `x`, `dd`, `dw`
-- Commands: `:w`, `:q`, `:wq`
+- Commands: `:w`, `:q`, `:wq`, `:recover`, `:delautosave`, `:man`, `:make`,
+  `:set`, `:cn`, `:cp`, `:cc`, `:cl`; `K` opens a man page
 - Repeat counts: Numeric prefixes for commands
 
 ### File Manager (Ctrl+B to toggle)
@@ -239,6 +247,129 @@ following first, wrapping round), then of the other open buffers, then the
 filetype's `completion_words` (keywords and types; Zig adds its `@builtins`,
 and its `word_prefix_chars` "@" lets `@im` complete to `@import`), then names
 from the `tags` file. At most `COMPLETION_MAX_ITEMS` (256).
+
+### Autosave and Crash Recovery
+
+Every edit of the text calls `buffer_note_change` (from `editor.c`'s
+`editor_note_change`; a new edit path must call it too). `Buffer.changes`
+against `saved_changes` is "modified" (the tab bar `+`), against
+`autosaved_changes` is "needs an autosave". `main.c` calls `editor_idle` on
+every pass of its loop; `editor_autosave_tick` writes a buffer's autosave once
+its edits paused `AUTOSAVE_IDLE_MS` (2 s) or `AUTOSAVE_MAX_PENDING` (200)
+piled up. The file is a plain-text copy, written to `<path>.tmp`, fsync'd and
+renamed over the old one.
+
+Where (`autosave_candidates`, first that can be written wins and is kept in
+`Buffer.autosave_path`):
+1. `<dir>/.<name>.yasvi-autosave` beside the file (like vim's `.swp`; the file's
+   own directory, not the working directory, so it is found whatever directory
+   vi is started from)
+2. `$XDG_CACHE_HOME/yasvi`, else `$HOME/.cache/yasvi`, else `/root/.cache/yasvi`,
+   named after the absolute path with `/` as `%` -- for read-only directories
+3. `/tmp/yasvi`, same naming (survives vi, not a reboot)
+Unnamed buffers use 2 and 3 as `noname-<pid>.yasvi-autosave`.
+
+`:w` of the buffer's own file, `:bd` and a clean exit delete it. On load
+(`editor_check_autosave`) an autosave equal to the loaded text is deleted; any
+other was left by a crash: it goes to `Buffer.stale_autosave`, the status bar
+says so, and that buffer is not autosaved (so the crash's copy is kept) until
+`:recover` (the text is replaced by it and it becomes the buffer's autosave;
+`:w` keeps it) or `:delautosave`. `:w name` on an unnamed buffer names it.
+The help buffer sets `autosave_disabled`. Tests: `tests/autosave_tests.c`.
+
+### Manual Pages (`:man`, `K`)
+
+`man.c` finds a page the way `/usr/bin/man` (yasos.zig `usr/bin/man`,
+`find_page`/`in_dir`) does, from a MANPATH string it is given (colon-separated,
+default `/usr/share/man`): `DIR/NAME.txt`, else `DIR/NAME.txt.gz`, else the
+line `NAME BLOCK OFFSET LENGTH` of `DIR/index`, in each directory in turn;
+then the first line `NAME PAGE` of each `DIR/aliases` (`fprintf printf`,
+`sys/stat.h sys-stat.h`) whose PAGE one of those finds (`man_locate`, a
+`ManPage`). The built pages are all in the index: scripts/man/build_man.py
+packs them into xz blocks of about 64 KB (`DIR/bNN.xz`; a 64 KB block unpacks
+in 0.09 s on the Pico Plus 2, 128 KB took 0.6 s). `DIR/whatis` is the
+one-line list. `editor.c`:
+- `:man NAME` opens the page in a buffer (`autosave_disabled`); an open buffer
+  of it is reused. No page: "No manual entry for NAME".
+- `:man` opens the whatis index.
+- `K` opens the page for the word under the cursor. The word also takes `.`,
+  `/` and `-` (so `stdio.h` and `sys/stat.h` work), drops punctuation at its
+  ends, and falls back to the plain identifier when the wide word has no page.
+- A packed page: `xzcat BLOCK > /tmp/yasvi-man-NAME.txt` (`run_to_file`:
+  vfork/execve of `/bin/xzcat`, else `/usr/bin/xzcat`, and waitpid; no pipe),
+  then `man_cut` keeps its OFFSET/LENGTH. A `.gz` page the same way with zcat.
+  That copy is the buffer, named after the page, so `:man` of the page or any
+  alias of it finds the open buffer. There is no read-only mode; `:w` would write the
+  copy (or the plain page's file).
+
+Tests: `tests/man_tests.c` (lookup with temp dirs; `:man` and `K` through the
+editor; a page gzipped with the host's gzip, read through zcat; a two-page
+xz block and index, read through the host's xzcat and man_cut).
+
+### Building (`:make`) and the Error List
+
+`make.c` holds everything without terminal I/O, `run.c` spawns, `editor.c`
+glues it to curses (`editor_make`, `editor_make_report`, `MakeState` in
+`Editor.make`, allocated on first use).
+
+Settings (`MakeConfig`): `makeprg` (a shell command) and `makemode` (`wait`,
+default, or `exec`). Read at startup (`editor_load_config` from `main.c`) from
+`.yasvirc` in the working directory, else `$HOME/.yasvirc`: lines `key=value` or
+`set key=value`, `#` comments, the value is the rest of the line. `:set
+key=value` changes one, `:set` shows both (an unset makeprg shows its default).
+Unset makeprg: `/usr/bin/bash ./build.sh` if `build.sh` exists, else `make` if
+there is a `Makefile`, else `:make` says how to set it.
+
+`:make [args]`:
+1. autowrite: every modified buffer with a filename that is not
+   `autosave_disabled` is written (named in the terminal: "wrote a.c b.c"); a
+   failed write stops the build.
+2. the script `: > LOG.rc; { MAKEPRG ARGS; echo $? > LOG.rc; } 2>&1 | tee LOG`
+   (LOG = /tmp/yasvi-make.log). The board's bash is toybox sh, which rejects
+   `set -o pipefail` ("bad -o pipefail", checked on the Pico Plus 2), so the
+   build's status is saved from inside the pipeline (a brace group in a
+   pipeline works there) and read back from LOG.rc. It runs as
+   `/usr/bin/bash -c SCRIPT` (`make_build_script`), so the output streams to
+   the terminal and is kept; the group takes a compound makeprg (`a && b`)
+   whole. vfork + execve of the shell, a shebang script and a shell pipeline
+   with tee were all run on the Pico Plus 2 (2026-11-16) without the HardFault
+   apps/prun's header warns about.
+3. `wait`: `endwin`, print the command, `run_shell_wait` (vfork, execve,
+   waitpid -- vi sits in waitpid, which is what lets the kernel swap it out
+   for the build), "[build exited N] press Enter", then `window_init` and
+   `editor_mark_dirty_whole_screen` (`editor_resume_screen`).
+   `exec` ("swap vi out"): refused while an unnamed buffer is modified. Writes
+   `/tmp/yasvi-session` (`make_session_write`: the settings, the current index,
+   `file LINE COL NOAUTOSAVE PATH` per named buffer except the help), `endwin`,
+   and execs bash with `make_build_exec_script`: the build as above, its
+   status into `/tmp/yasvi-make.log.rc`, a wait for Enter, `exec vi -S
+   /tmp/yasvi-session` (vi's own argv[0] when it has a `/`, else `vi` from
+   PATH). `vi -S FILE` (`editor_restore_session`) loads the buffers, puts the
+   cursor back, deletes the session and `.rc` files, then reports as wait does.
+4. `editor_make_report` parses the log (`make_parse_log`:
+   `file:line[:col]: error|fatal error|warning: msg`, tcc's `f.c:12: error:`
+   and gcc/zig's `f:12:5: error:`; notes and make's own lines are skipped) and
+   says "build ok" or "build failed (exit N), M errors" (plus warnings), and
+   jumps to the first error (not warning) with its text after the summary.
+
+`:cn` / `:cp` go to the next / previous entry (errors and warnings, in log
+order), `:cc [N]` to the current (or Nth); the status bar shows "(i of n)
+file:line: error: msg". `:cl` opens the log as a buffer (`autosave_disabled`,
+reloaded if already open). Messages here use `editor_set_status_message`,
+which does not append the ": 'command'" of `editor_set_error_message`.
+
+Spawning (`run.c`) follows apps/prun: argv and envp are copied into a static
+arena (3 KiB; the kernel's uaccess refuses malloc'd memory in execve), the
+environment is a copy of `environ` (never `environ` itself) with a default
+`PATH` added if missing, and the vforked child only opens/dup2s/execs/_exits.
+Only libc calls libs/libc implements are used (vfork, execve, waitpid, open,
+dup2, read, remove).
+
+Tests: `tests/make_tests.c` (settings, scripts, error lines, the session file;
+through the editor `:set`, the error list, `-S`, and a real wait-mode `:make`
+running bash on the host with stdin on /dev/null). The tests build with
+`MAKE_LOG_PATH`/`MAKE_SESSION_PATH` pointed into `tests/build`. Not testable on
+the host: curses suspend/resume on the real terminal, and exec mode's exec.
 
 ### Built-in Help (`:help`)
 

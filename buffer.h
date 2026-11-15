@@ -32,6 +32,19 @@ typedef struct Buffer {
   int number_of_rows;
   char* filename;
   const struct Filetype* filetype;  // NULL for plain text
+
+  // Edit tracking: `changes` counts edits; the buffer is modified while it
+  // differs from `saved_changes` (taken at load and at :w) and needs an
+  // autosave while it differs from `autosaved_changes`.
+  unsigned long changes;
+  unsigned long saved_changes;
+  unsigned long autosaved_changes;
+  // When `changes` was last seen to move, for the idle autosave (editor.c).
+  unsigned long observed_changes;
+  long long observed_at_ms;
+  char* autosave_path;   // this session's autosave file, NULL until written
+  char* stale_autosave;  // left by a crash, until :recover or :delautosave
+  bool autosave_disabled;  // :help and other buffers that are not files
 } Buffer;
 
 Buffer* buffer_alloc();
@@ -67,3 +80,7 @@ int buffer_join_current_line_with_previous(Buffer* buffer);
 const char* buffer_get_filename(const Buffer* buffer);
 int buffer_get_current_line_number(const Buffer* buffer);
 bool buffer_is_modified(const Buffer* buffer);
+// Every edit of the text calls this; it drives the [+] mark and autosave.
+void buffer_note_change(Buffer* buffer);
+// The text now equals the file on disk (it was just loaded or written).
+void buffer_mark_saved(Buffer* buffer);

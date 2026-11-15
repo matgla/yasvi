@@ -101,6 +101,14 @@ Buffer* buffer_alloc() {
     buffer->number_of_rows = 0;
     buffer->filename = NULL;
     buffer->filetype = NULL;
+    buffer->changes = 0;
+    buffer->saved_changes = 0;
+    buffer->autosaved_changes = 0;
+    buffer->observed_changes = 0;
+    buffer->observed_at_ms = 0;
+    buffer->autosave_path = NULL;
+    buffer->stale_autosave = NULL;
+    buffer->autosave_disabled = false;
   }
   return buffer;
 }
@@ -119,6 +127,8 @@ void buffer_free(Buffer* buffer) {
       free(buffer->filename);
       buffer->filename = NULL;
     }
+    free(buffer->autosave_path);
+    free(buffer->stale_autosave);
     free(buffer);
   }
 }
@@ -412,8 +422,17 @@ int buffer_get_current_line_number(const Buffer* buffer) {
 }
 
 bool buffer_is_modified(const Buffer* buffer) {
-  // TODO: Implement proper modification tracking
-  // For now, always return false
-  (void)buffer;
-  return false;
+  return buffer != NULL && buffer->changes != buffer->saved_changes;
+}
+
+void buffer_note_change(Buffer* buffer) {
+  if (buffer != NULL) {
+    ++buffer->changes;
+  }
+}
+
+void buffer_mark_saved(Buffer* buffer) {
+  if (buffer != NULL) {
+    buffer->saved_changes = buffer->changes;
+  }
 }

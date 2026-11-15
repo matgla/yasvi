@@ -74,6 +74,7 @@ typedef struct {
   TagStackEntry tag_stack[EDITOR_TAG_STACK_DEPTH];
   int tag_stack_size;
   struct Completion* completion;  // Ctrl-N/Ctrl-P state, allocated on first use
+  struct MakeState* make;  // :make settings and error list (make.h), on first use
 } Editor;
 
 void editor_process_key(Editor* editor, int key);
@@ -97,3 +98,19 @@ void editor_draw_tab_bar(Editor* editor);
 // ctags navigation (tags file from `ctags -R`)
 bool editor_jump_to_tag(Editor* editor, const char* name);  // Ctrl-], :tag
 bool editor_pop_tag(Editor* editor);                        // Ctrl-T, :pop
+
+// Autosave (autosave.h): call editor_idle from the main loop; it writes the
+// autosave of a buffer whose edits paused AUTOSAVE_IDLE_MS (now_ms from a
+// monotonic clock) or piled up to AUTOSAVE_MAX_PENDING.
+void editor_idle(Editor* editor);
+void editor_autosave_tick(Editor* editor, long long now_ms);
+
+// :make (make.h). editor_set_program_path records argv[0], which
+// makemode=exec execs to come back. editor_load_config reads .yasvirc (the
+// working directory's, else $HOME's). editor_restore_session is vi -S FILE:
+// the buffers and cursors makemode=exec saved, then the build's result.
+// editor_make_report reads a finished build's log (status -1: not started).
+void editor_set_program_path(Editor* editor, const char* path);
+void editor_load_config(Editor* editor);
+bool editor_restore_session(Editor* editor, const char* path);
+void editor_make_report(Editor* editor, const char* log_path, int status);

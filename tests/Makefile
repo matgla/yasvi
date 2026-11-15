@@ -10,7 +10,8 @@ LDFLAGS += -fsanitize=address
 endif
 
 # System Under Test sources (will be compiled with tests)
-SUT_SRCS = ../buffer.c ../buffer_row.c ../command.c ../completion.c ../help.c ../search.c ../tags.c \
+SUT_SRCS = ../autosave.c ../buffer.c ../buffer_row.c ../command.c ../completion.c ../help.c ../search.c ../tags.c \
+           ../make.c ../man.c ../run.c \
            ../filetypes/filetype.c ../filetypes/c.c ../filetypes/shell.c \
            ../filetypes/zig.c ../filetypes/pio.c
 
@@ -47,7 +48,10 @@ TEST_NAMES = buffer_tests command_tests \
              search_tests \
              tags_tests \
              search_cycle_tests \
-             toolbar_layout_tests
+             toolbar_layout_tests \
+             autosave_tests \
+             man_tests \
+             make_tests
 
 TEST_BINS = $(patsubst %,build/%,$(TEST_NAMES))
 
@@ -135,6 +139,19 @@ build/search_cycle_tests: search_cycle_tests.c $(SUT_SRCS) acutest.h | build
 
 build/toolbar_layout_tests: toolbar_layout_tests.c $(SUT_SRCS) $(MOCK_SRCS) $(TOOLBAR_SRCS) $(FM_SRCS) ../editor.c ../window.c acutest.h mock_ncurses.h | build
 	$(CC) $(EDITOR_TEST_CFLAGS) -o $@ toolbar_layout_tests.c $(SUT_SRCS) $(MOCK_SRCS) $(TOOLBAR_SRCS) $(FM_SRCS) ../editor.c ../window.c $(LDFLAGS)
+
+build/autosave_tests: autosave_tests.c $(SUT_SRCS) $(MOCK_SRCS) $(TOOLBAR_SRCS) $(FM_SRCS) ../editor.c ../window.c acutest.h mock_ncurses.h | build
+	$(CC) $(EDITOR_TEST_CFLAGS) -o $@ autosave_tests.c $(SUT_SRCS) $(MOCK_SRCS) $(TOOLBAR_SRCS) $(FM_SRCS) ../editor.c ../window.c $(LDFLAGS)
+
+build/man_tests: man_tests.c $(SUT_SRCS) $(MOCK_SRCS) $(TOOLBAR_SRCS) $(FM_SRCS) ../editor.c ../window.c acutest.h mock_ncurses.h | build
+	$(CC) $(EDITOR_TEST_CFLAGS) -o $@ man_tests.c $(SUT_SRCS) $(MOCK_SRCS) $(TOOLBAR_SRCS) $(FM_SRCS) ../editor.c ../window.c $(LDFLAGS)
+
+# :make's log and session go to the build directory, not the real /tmp ones.
+MAKE_TEST_PATHS = -DMAKE_LOG_PATH='"build/yasvi-make-test.log"' \
+                  -DMAKE_SESSION_PATH='"build/yasvi-session-test"'
+
+build/make_tests: make_tests.c $(SUT_SRCS) $(MOCK_SRCS) $(TOOLBAR_SRCS) $(FM_SRCS) ../editor.c ../window.c acutest.h mock_ncurses.h | build
+	$(CC) $(EDITOR_TEST_CFLAGS) $(MAKE_TEST_PATHS) -o $@ make_tests.c $(SUT_SRCS) $(MOCK_SRCS) $(TOOLBAR_SRCS) $(FM_SRCS) ../editor.c ../window.c $(LDFLAGS)
 
 run: $(TEST_BINS)
 	@for test in $(TEST_NAMES); do \

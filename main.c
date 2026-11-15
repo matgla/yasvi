@@ -17,6 +17,7 @@
 
 #include <ncurses.h>
 #include <stdio.h>
+#include <string.h>
 
 #include "editor.h"
 #include "window.h"
@@ -43,7 +44,14 @@ int main(int argc, char* argv[]) {
     .string_rendering_ongoing = false,
   };
   editor_init(&editor);
-  if (argc > 1) {
+  editor_set_program_path(&editor, argv[0]);
+  editor_load_config(&editor);  // .yasvirc: makeprg, makemode
+  if (argc > 2 && strcmp(argv[1], "-S") == 0) {
+    // vi -S FILE: back from a makemode=exec build
+    if (!editor_restore_session(&editor, argv[2])) {
+      editor_create_new_file(&editor);
+    }
+  } else if (argc > 1) {
     editor_load_file(&editor, argv[1]);
   } else {
     editor_create_new_file(&editor);
@@ -61,6 +69,7 @@ int main(int argc, char* argv[]) {
         break;
       }
     }
+    editor_idle(&editor);
   }
   editor_deinit(&editor);
   return 0;
