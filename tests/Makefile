@@ -119,8 +119,10 @@ build/editor_command_tests: editor_command_tests.c $(SUT_SRCS) $(MOCK_SRCS) $(TO
 build/editor_key_tests: editor_key_tests.c $(SUT_SRCS) $(MOCK_SRCS) $(TOOLBAR_SRCS) $(FM_SRCS) ../editor.c ../window.c acutest.h mock_ncurses.h | build
 	$(CC) $(EDITOR_TEST_CFLAGS) -o $@ editor_key_tests.c $(SUT_SRCS) $(MOCK_SRCS) $(TOOLBAR_SRCS) $(FM_SRCS) ../editor.c ../window.c $(LDFLAGS)
 
-build/file_manager_unit_tests: file_manager_unit_tests.c $(SUT_SRCS) $(FM_SRCS) acutest.h | build
-	$(CC) $(CFLAGS) -o $@ file_manager_unit_tests.c $(SUT_SRCS) $(FM_SRCS) $(LDFLAGS) -lncurses
+# The mock, like the editor tests: with plain CFLAGS, -I. made file_manager.c's
+# <ncurses.h> the empty tests/ncurses.h shim, so nothing ncurses was declared.
+build/file_manager_unit_tests: file_manager_unit_tests.c $(SUT_SRCS) $(MOCK_SRCS) $(FM_SRCS) acutest.h mock_ncurses.h | build
+	$(CC) $(EDITOR_TEST_CFLAGS) -o $@ file_manager_unit_tests.c $(SUT_SRCS) $(MOCK_SRCS) $(FM_SRCS) $(LDFLAGS)
 
 build/file_manager_integration_tests: file_manager_integration_tests.c $(SUT_SRCS) $(MOCK_SRCS) $(TOOLBAR_SRCS) $(FM_SRCS) ../editor.c ../window.c acutest.h mock_ncurses.h | build
 	$(CC) $(EDITOR_TEST_CFLAGS) -o $@ file_manager_integration_tests.c $(SUT_SRCS) $(MOCK_SRCS) $(TOOLBAR_SRCS) $(FM_SRCS) ../editor.c ../window.c $(LDFLAGS)
