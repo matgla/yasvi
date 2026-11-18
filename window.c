@@ -18,8 +18,26 @@
 #include "window.h"
 
 #include <stdbool.h>
+#include <termios.h>
+#include <unistd.h>
 
 #include <ncurses.h>
+
+// raw() as X/Open has it: ^C is a key, not SIGINT. yasos_curses' raw()
+// leaves ISIG on, and YasOS's console sends ^C to the foreground process,
+// which is vi while it edits: Ctrl-C killed vi. The :term panel uses it to
+// interrupt what its shell runs. endwin() puts the saved termios back.
+static void window_keep_ctrl_c_a_key(void) {
+  // Both descriptors, as yasos_curses sets both (one tty on YasOS).
+  const int fds[2] = {0, 1};  // stdin, stdout
+  for (int i = 0; i < 2; ++i) {
+    struct termios mode;
+    if (tcgetattr(fds[i], &mode) == 0 && (mode.c_lflag & ISIG) != 0) {
+      mode.c_lflag &= ~ISIG;
+      tcsetattr(fds[i], TCSANOW, &mode);
+    }
+  }
+}
 
 void window_init(Window* window) {
   initscr();
@@ -39,6 +57,9 @@ void window_init(Window* window) {
   init_pair(5, COLOR_BLUE, COLOR_BLACK);
   init_pair(6, COLOR_CYAN, COLOR_BLACK);
   init_pair(7, COLOR_RED, COLOR_BLACK);
+  // Last: yasos_curses writes its own copy of the termios back on noecho()
+  // and friends.
+  window_keep_ctrl_c_a_key();
 }
 
 void window_deinit(Window* window) {

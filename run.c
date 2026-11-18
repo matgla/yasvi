@@ -23,6 +23,7 @@
 #include <fcntl.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -44,6 +45,7 @@ static size_t g_run_arena_used;
 static char* g_run_argv[4];
 static char* g_run_envp[RUN_MAX_ENV + 1];
 static char* g_run_out_path;
+static bool g_run_stdin_null;  // the child reads /dev/null, not the terminal
 static char* g_run_program;
 
 static char* run_arena_dup(const char* text) {
@@ -57,13 +59,26 @@ static char* run_arena_dup(const char* text) {
   return out;
 }
 
+// TERM for the next environment copy, replacing the inherited one (NULL:
+// keep it).
+static const char* g_run_term;
+
 // Copies the environment after whatever the arena already holds.
 static void run_copy_environment(void) {
   int count = 0;
   bool has_path = false;
+  if (g_run_term != NULL) {
+    char* term = run_arena_dup(g_run_term);
+    if (term != NULL) {
+      g_run_envp[count++] = term;
+    }
+  }
   for (char** entry = environ; entry != NULL && *entry != NULL; ++entry) {
     if (count == RUN_MAX_ENV - 1) {
       break;  // one slot stays free for a default PATH
+    }
+    if (g_run_term != NULL && strncmp(*entry, "TERM=", 5) == 0) {
+      continue;
     }
     char* copy = run_arena_dup(*entry);
     if (copy == NULL) {
@@ -125,6 +140,13 @@ static int run_spawn_and_wait(const char* program) {
   }
   if (pid == 0) {
     // The child shares vi's memory until execve: only syscalls here.
+    if (g_run_stdin_null) {
+      int fd = open("/dev/null", O_RDONLY);
+      if (fd >= 0) {
+        dup2(fd, 0);
+        close(fd);
+      }
+    }
     if (g_run_out_path != NULL) {
       int fd = open(g_run_out_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
       if (fd < 0) {
@@ -174,6 +196,123 @@ int run_to_file(const char* program, const char* arg, const char* out_path) {
   const int status = run_spawn_and_wait(program_copy);
   g_run_out_path = NULL;
   return status;
+}
+
+int run_shell_to_file(const char* script, const char* out_path) {
+  if (!run_prepare_shell(script)) {
+    return -1;
+  }
+  g_run_out_path = run_arena_dup(out_path);
+  if (g_run_out_path == NULL) {
+    return -1;
+  }
+  g_run_stdin_null = true;
+  const int status = run_spawn_and_wait(g_run_program);
+  g_run_stdin_null = false;
+  g_run_out_path = NULL;
+  return status;
+}
+
+int run_shell_piped(int* to_shell, int* from_shell) {
+  int input[2];
+  int output[2];
+  if (pipe(input) != 0) {
+    return -1;
+  }
+  if (pipe(output) != 0) {
+    close(input[0]);
+    close(input[1]);
+    return -1;
+  }
+  // vi's ends: never inherited by the shell or anything else vi starts.
+  fcntl(input[1], F_SETFD, FD_CLOEXEC);
+  fcntl(output[0], F_SETFD, FD_CLOEXEC);
+  g_run_arena_used = 0;
+  g_run_out_path = NULL;
+  g_run_argv[0] = run_arena_dup("bash");
+  g_run_argv[1] = NULL;
+  g_run_program = run_arena_dup(MAKE_SHELL);
+  g_run_term = "TERM=dumb";
+  run_copy_environment();
+  g_run_term = NULL;
+  pid_t pid = -1;
+  if (g_run_argv[0] != NULL && g_run_program != NULL) {
+    fflush(stdout);
+    fflush(stderr);
+    pid = vfork();
+    if (pid == 0) {
+      // The child shares vi's memory until execve: only syscalls here.
+      dup2(input[0], 0);
+      dup2(output[1], 1);
+      dup2(output[1], 2);
+      close(input[0]);
+      close(input[1]);
+      close(output[0]);
+      close(output[1]);
+      execve(g_run_program, g_run_argv, g_run_envp);
+      _exit(127);
+    }
+  }
+  close(input[0]);
+  close(output[1]);
+  if (pid < 0) {
+    close(input[1]);
+    close(output[0]);
+    return -1;
+  }
+  fcntl(input[1], F_SETFL, O_NONBLOCK);
+  fcntl(output[0], F_SETFL, O_NONBLOCK);
+  *to_shell = input[1];
+  *from_shell = output[0];
+  return pid;
+}
+
+char* run_expand_command(const char* command, const char* filename, bool* no_name) {
+  if (no_name != NULL) {
+    *no_name = false;
+  }
+  char* quoted = NULL;
+  size_t length = 0;
+  for (const char* p = command; *p != '\0'; ++p) {
+    if (p[0] == '\\' && p[1] == '%') {
+      ++p;
+      ++length;
+    } else if (*p == '%') {
+      if (filename == NULL) {
+        free(quoted);
+        if (no_name != NULL) {
+          *no_name = true;
+        }
+        return NULL;
+      }
+      if (quoted == NULL && (quoted = make_shell_quote(filename)) == NULL) {
+        return NULL;
+      }
+      length += strlen(quoted);
+    } else {
+      ++length;
+    }
+  }
+  char* out = malloc(length + 1);
+  if (out == NULL) {
+    free(quoted);
+    return NULL;
+  }
+  char* q = out;
+  for (const char* p = command; *p != '\0'; ++p) {
+    if (p[0] == '\\' && p[1] == '%') {
+      *q++ = *++p;
+    } else if (*p == '%') {
+      const size_t n = strlen(quoted);
+      memcpy(q, quoted, n);
+      q += n;
+    } else {
+      *q++ = *p;
+    }
+  }
+  *q = '\0';
+  free(quoted);
+  return out;
 }
 
 void run_wait_for_enter(void) {

@@ -25,6 +25,8 @@ The project is licensed under GNU General Public License v3.0 (GPL-3.0).
 ├── buffer.c/h          # Text buffer management (linked list of rows)
 ├── buffer_row.c/h      # Individual line operations and syntax highlighting
 ├── file_manager.c/h    # File manager sidebar (NERDTree-like)
+├── fileops.c/h         # paths, file operations (tree), file name completion
+├── indent.c/h          # automatic indentation rules (autoindent), no curses
 ├── window.c/h          # ncurses window initialization and color pairs
 ├── command.c/h         # Command line handling (ex commands)
 ├── help.c/h            # :help built-in help text (shown in its own buffer)
@@ -34,15 +36,19 @@ The project is licensed under GNU General Public License v3.0 (GPL-3.0).
 ├── man.c/h             # :man / K manual page lookup (MANPATH, aliases, .gz)
 ├── make.c/h            # :make settings (.yasvirc, :set), script, error list,
 │                       # makemode=exec session file
+├── config.c/h          # editor settings: ~/.config/vi.conf, :set (record)
+├── record.c/h          # typing recorder: keys, times, pauses to FILE.rec
+├── termpanel.c/h       # :term panel: a shell on pipes, scrollback, history
 ├── run.c/h             # vfork/execve/waitpid for :make, zcat and xzcat
 ├── cursor.h            # Cursor position structure definition
 ├── highlight.h         # Syntax highlighting token types enum
 ├── filetypes/          # File type specific configurations
-│   ├── filetype.c/h    # File type registry and detection (extension, shebang)
+│   ├── filetype.c/h    # File type registry and detection (name, extension, shebang)
 │   ├── c.c/h           # C highlighter (default when no filetype matches)
 │   ├── shell.c/h       # Shell highlighter
 │   ├── zig.c/h         # Zig highlighter (.zig, .zon)
-│   └── pio.c/h         # RP2040/RP2350 PIO assembly highlighter (.pio)
+│   ├── pio.c/h         # RP2040/RP2350 PIO assembly highlighter (.pio)
+│   └── conf.c/h        # config files: vi.conf, .yasvirc, .conf/.ini, fstab
 ├── tests/              # Unit tests
 │   ├── acutest.h       # Single-header test framework
 │   ├── buffer_tests.c  # Buffer and buffer_row tests
@@ -72,7 +78,8 @@ The project is licensed under GNU General Public License v3.0 (GPL-3.0).
    - Directory tree navigation with expandable folders
    - File selection to open in editor
    - Toggle visibility with Ctrl+B
-   - Vim-style navigation (j/k for up/down, h/l for parent/enter)
+   - Vim-style navigation (j/k for up/down, h/l for up/open)
+   - File operations (new, rename/move, copy, delete) through `fileops.c`
    - Visual indicator: `-- FILEMGR --` mode in status bar
 
 4. **BufferRow** (`buffer_row.c/h`): Individual line operations:
@@ -146,6 +153,16 @@ cd tests && make run
 - `command_tests.c`: Basic tests for command buffer operations
 - `man_tests.c`: `:man` page lookup, `:man` and `K`
 - `make_tests.c`: `:make` settings, scripts, error list, session, `-S`
+- `record_tests.c`: config file and `:set record`, the `.rec` format, recording
+  through the editor
+- `shell_command_tests.c`: `:!cmd`, `:r !cmd`, `:r FILE`, `%` expansion
+- `file_ops_tests.c`: paths, file operations, completion, the tree's refresh
+  and navigation, `:e`/`:open`, the tree's a/A/r/c/d keys, Tab completion
+- `indent_tests.c`: block openers, bracket matching, the indent step, and
+  Enter/o/O/closing brackets/Tab/Backspace through the editor, Backspace
+  joining lines
+- `termpanel_tests.c`: output cleaning, scrollback, history, a real shell,
+  Ctrl-C, and the panel's keys through the editor
 
 ### Adding New Tests
 
@@ -197,9 +214,13 @@ clang-format -i editor.c
 ### Vi-style Commands
 
 - Navigation: `h`, `j`, `k`, `l`, `w`, `b`, `0`, `$`, `gg`, `G`
-- Editing: `i`, `a`, `o`, `x`, `dd`, `dw`
+- Editing: `i`, `a`, `o`, `O`, `x`, `dd`, `dw`
 - Commands: `:w`, `:q`, `:wq`, `:recover`, `:delautosave`, `:man`, `:make`,
-  `:set`, `:cn`, `:cp`, `:cc`, `:cl`; `K` opens a man page
+  `:set` (`record`, `autoindent`/`ai`, `makeprg`, `makemode`), `:cn`, `:cp`, `:cc`, `:cl`,
+  `:!cmd`, `:r !cmd`, `:r FILE`, `:term [cmd]`, `:termclose`, `:e`/`:open FILE`, `:e!`; `K` opens a
+  man page. `:q` in `:help`, a
+  `:man` page or the `:cl` log (`autosave_disabled` buffers) closes that
+  buffer instead of exiting, unless it is the only one
 - Repeat counts: Numeric prefixes for commands
 
 ### File Manager (Ctrl+B to toggle)
@@ -207,14 +228,52 @@ clang-format -i editor.c
 When file manager sidebar is visible:
 - `j` / `↓`: Move cursor down
 - `k` / `↑`: Move cursor up
-- `h` / `←`: Go to parent directory
-- `l` / `→` / `Enter`: Open file or expand directory
-- `Ctrl-H`: Open the file manager from the editor (vim-style window
-  switch left; `Ctrl-L` inside it closes the sidebar and returns to the
-  editor window). `Ctrl+B` still toggles either way.
-- `Space` / `o`: Toggle directory expand/collapse
-- `Escape`: Return to normal mode
-- `Ctrl+B`: Close file manager sidebar
+- `h` / `←`: Close an expanded directory, else go to the directory above,
+  else make the root's parent the root
+- `l` / `→` / `Enter`: Open file (the tree stays shown, the keys go to the
+  file) or expand directory
+- `Ctrl-H`: Keys to the tree, showing it if hidden (vim-style window switch
+  left); `Ctrl-L` gives the keys back to the text and leaves the tree shown.
+  `Ctrl+B` toggles it either way, `q` in it hides it. Only from normal mode
+  and the tree: in insert mode, on the `:` line and in a search Ctrl-H is
+  Backspace (as in vim). yasos_curses passes 0x08 through and maps only
+  0x7F to `KEY_BACKSPACE` (it used to map both, so the board never saw
+  Ctrl-H; host ncurses always told them apart).
+- `Space` / `o`: Toggle directory expand/collapse; `C` makes it the root
+- `a`: new file in the selected directory (or the selected file's), opened
+  at once; a name ending in `/` makes a directory, missing directories in
+  the name are made. `A`: new directory
+- `r` / `m`: rename or move; the answer is taken from the entry's directory
+  (absolute and `~` work), an existing directory or a name ending in `/`
+  takes the entry inside. Open buffers follow the new name (their autosave
+  is written again under it)
+- `c`: copy (directories recursively); `d`: delete, `y` confirms (a
+  directory with everything in it). Nothing ever overwrites an existing name
+- `R`: read the tree again. It is also read again when shown (Ctrl-B,
+  Ctrl-H) and after `:w`; expanded directories stay expanded and the cursor
+  stays on the same path (or the nearest directory above it)
+- `Escape`: Return to normal mode (a question on the command line: cancel)
+
+The cursor's line is counted from the tree on every move
+(`file_manager_sync_cursor`), never tracked by hand: the old incremental
+count went out of step after `h`, and Enter then acted on the entry below
+the highlight. The marks are ASCII (`+ dir/`, `- dir/`, `@ link`) because
+yasos_curses counts bytes as columns. The selection is reverse video while
+the tree has the keys, bold otherwise (`FileManager.focused`, set by
+editor.c before drawing). The prompt state lives in `FileManager`, not in
+`Editor`, so the test files' copies of the `Editor` struct stay as they are.
+
+### Opening files
+
+- `:e FILE`, `:edit FILE`, `:o FILE`, `:open FILE`: an open buffer of the
+  same file (any spelling: `path_same` compares `path_absolute` of both) is
+  switched to; a missing file is a new buffer that `:w` creates; a
+  directory opens in the tree as its root. The blank `[No Name]` buffer vi
+  starts with is replaced rather than kept as a tab.
+- `:e` / `:e!` read the current file again (`:e` refuses while modified).
+- Tab on the command line after `:e`, `:open`, `:r`, `:w` (and kin)
+  completes file names: the common part of the matches, then a list of them
+  on the message line. Tests: `tests/file_ops_tests.c`.
 
 ### ctags Navigation
 
@@ -246,7 +305,16 @@ Candidates, without duplicates: words of the current buffer (nearest
 following first, wrapping round), then of the other open buffers, then the
 filetype's `completion_words` (keywords and types; Zig adds its `@builtins`,
 and its `word_prefix_chars` "@" lets `@im` complete to `@import`), then names
-from the `tags` file. At most `COMPLETION_MAX_ITEMS` (256).
+from the `tags` file, then -- in C buffers -- the C library's tags
+(`YASVI_SYSTEM_TAGS`, `/usr/share/yasvi/libc.tags`, `editor_system_tags`).
+At most `COMPLETION_MAX_ITEMS` (256). `:tag` and Ctrl-] fall back to the same
+file when the project's tags (or no tags file) lack a name, so `printf`
+jumps to its prototype in `/usr/include/stdio.h`. `build_rootfs.sh` writes it
+with the host's ctags over `rootfs/usr/include` (functions, macros, types,
+enum values; no members, no `_` names, no tcc `tcclib.h`; absolute paths,
+`--fields=k`: about 180 KB, 2700 names) and skips it with a warning when the
+host has no ctags. The tests point `YASVI_SYSTEM_TAGS` at
+`/tmp/yasvi_libc_test.tags` (`EDITOR_TEST_CFLAGS`).
 
 ### Autosave and Crash Recovery
 
@@ -276,6 +344,95 @@ says so, and that buffer is not autosaved (so the crash's copy is kept) until
 `:recover` (the text is replaced by it and it becomes the buffer's autosave;
 `:w` keeps it) or `:delautosave`. `:w name` on an unnamed buffer names it.
 The help buffer sets `autosave_disabled`. Tests: `tests/autosave_tests.c`.
+
+### Settings File (`~/.config/vi.conf`)
+
+`config.c` holds the editor's own settings (`EditorConfig` in
+`Editor.config`; `:make`'s stay in `make.c`'s `MakeConfig`). At startup
+`editor_load_config` reads the user's file, `$XDG_CONFIG_HOME/vi.conf`, else
+`$HOME/.config/vi.conf`, else `/root/.config/vi.conf` (`config_user_path`),
+then `.yasvirc` (working directory, else `$HOME`), so a project overrides the
+user. Every line of either goes through `editor_apply_setting`: `config_set`
+first, then `make_config_set` for a key it does not know, so both files and
+`:set` take every setting. A file with lines neither knows is named in the
+first message, with the first such line and the settings there are
+(`~/.config/vi.conf:1: unknown "set recording" (record, ai, makeprg,
+makemode)`, `(+N more)` when there are others; `~` for `$HOME` keeps it
+within 80 columns, and a centred toolbar widget wider than the screen now
+starts at column 0 and is cut instead of vanishing). Lines are `key=value` or
+`set key=value`, `#` comments; a boolean also takes `key`, `nokey` and `key?`
+(on/off/yes/no/true/false/1/0 as values). A new boolean is one row in
+`g_config_bools` plus its field. `:set` alone shows all
+(`norecord autoindent makeprg=... makemode=...`); `:set record` shows just
+`record` (`config_describe_setting`). A boolean may have a short name
+(`ai`). `config_init` (from `main.c`) sets the defaults; tests that zero the
+`Editor` get every boolean off, so autoindent stays out of the older tests.
+
+### Automatic Indentation (`autoindent`, default on)
+
+`indent.c` holds the rules without curses; `editor.c`'s "Automatic
+indentation" section applies them. Language by filetype name: C, Zig, PIO
+have brackets, shell also `then`/`do`/`else`/`case ... in`, anything else
+only keeps the line's indentation. Enter (`editor_insert_newline`, also `o`)
+copies the indentation before the cursor, adds one step after a block
+opener, strips the moved text's leading and the old line's trailing white
+space, puts a moved closing bracket under its opener, and splits `{|}` into
+three lines. A `}` `)` `]` typed as the first thing on a line moves under its
+opener (`indent_find_opener`: brackets outside strings, char literals and
+line comments, 2000 lines up; block comments are not skipped). The step is
+`indent_unit`: a tab if most indented lines start with one, else the most
+common increase between lines (first 500), else `tab_size` spaces. Tab and
+Backspace in an all-space indentation go to the next/previous step. A line
+that only holds Enter's indentation (`g_autoindent_row`) becomes empty on
+Esc or another Enter. `O` (`editor_open_line_above`) copies the line's
+indentation, a step more above a closing bracket. Backspace at column 0
+joins with the line above; `buffer_join_current_line_with_previous` leaves
+the joined line current (it used to leave the one below, which the screen
+then drew in place of the joined line).
+
+### Typing Recorder (`record`)
+
+With `record` on, `editor_process_key` first hands the key to
+`editor_record_key` (before processing it, so a key that switches buffers
+belongs to the buffer it left). Keys typed while a named file that is not
+`autosave_disabled` and not itself a `.rec` is current are appended to
+`FILE.rec` beside it (`record.c`, no curses). One recording is open at a time
+(`Editor.recorder`, allocated on first use): a key for another file closes it
+and that file's next key starts a new session. The file is appended to, never
+rewritten, so it holds every session:
+
+```
+# yasvi recording of t.c                     (4 comment lines, new file only)
+session 2026-11-18 09:40:44 unix 1794991244 lines 1
+0 0 111 o                                    AT_MS PAUSE_MS CODE KEY
+100 100 104 h
+401 151 27 ESC
+pause 2026-11-18 09:40:46 after 2.504 s      before a key after >= 2 s
+2905 2504 58 :
+```
+
+AT_MS counts from the session's start and PAUSE_MS from the key before
+(monotonic clock, `autosave_now_ms`); the dates are local time from `time()`
+at the session start plus AT (so a board without a set clock writes 1970).
+KEY is the character, SPACE/TAB/ENTER/ESC/BS, `^X`, or a curses key's name
+(UP, DOWN, ..., KBS for KEY_BACKSPACE) from `editor_curses_key_name` -- named in
+editor.c because the codes differ between yasos_curses, ncurses and the test
+mock. Keys are buffered by stdio: `editor_idle` flushes once typing paused
+`RECORD_FLUSH_MS` (1 s), `:make` flushes before handing over the terminal or
+exec'ing (exec drops stdio buffers), `:set norecord` and exit close it. A crash
+loses at most the last second. An unwritable directory is reported once per
+file ("Cannot record to FILE.rec"). Not carried across makemode=exec: a
+`:set record` typed in the session (vi.conf is read again on the way back).
+
+The `:term` panel is recorded as lines that start with a word (never keys):
+`term AT focus` / `text AT focus` after a key that moved the focus
+(`editor_process_key` wraps `editor_handle_key` to see it), and from the
+panel's `TermPanel.on_line` hook (`editor_record_terminal_line`): `term AT $
+LINE` sent, `out AT LINE` printed (cleaned, one per scrollback line), `term AT
+exit N`. They go through `recorder_note` to the open recording, else the
+current file's; with no named file they are not kept. Keys typed in the
+panel stay ordinary key lines. Test: `record_tests.c`
+`editor_records_terminal`.
 
 ### Manual Pages (`:man`, `K`)
 
@@ -314,7 +471,8 @@ glues it to curses (`editor_make`, `editor_make_report`, `MakeState` in
 
 Settings (`MakeConfig`): `makeprg` (a shell command) and `makemode` (`wait`,
 default, or `exec`). Read at startup (`editor_load_config` from `main.c`) from
-`.yasvirc` in the working directory, else `$HOME/.yasvirc`: lines `key=value` or
+`~/.config/vi.conf` and then `.yasvirc` in the working directory, else
+`$HOME/.yasvirc` (see Settings File): lines `key=value` or
 `set key=value`, `#` comments, the value is the rest of the line. `:set
 key=value` changes one, `:set` shows both (an unset makeprg shows its default).
 Unset makeprg: `/usr/bin/bash ./build.sh` if `build.sh` exists, else `make` if
@@ -371,6 +529,67 @@ running bash on the host with stdin on /dev/null). The tests build with
 `MAKE_LOG_PATH`/`MAKE_SESSION_PATH` pointed into `tests/build`. Not testable on
 the host: curses suspend/resume on the real terminal, and exec mode's exec.
 
+### Shell Commands (`:!cmd`, `:r !cmd`, `:r FILE`)
+
+`editor.c` (`editor_bang`, `editor_read`) on top of `run.c`. In the command,
+`%` is the current file's name, shell-quoted, and `\%` a plain `%`
+(`run_expand_command`; a `%` in an unnamed buffer: "No file name for %").
+- `:!cmd`: like `:make`'s wait mode -- flush the recording, `endwin`, print the
+  command, `run_shell_wait` (`/usr/bin/bash -c`, the terminal as stdin/stdout,
+  so interactive programs work), "[exit N] press Enter", `editor_resume_screen`.
+  The status bar says "!cmd: exit N".
+- `:r !cmd`: `run_shell_to_file` (stdin `/dev/null`, stdout and stderr into
+  `RUN_OUTPUT_PATH`, /tmp/yasvi-cmd.out, removed afterwards), then
+  `editor_insert_file_below`: the lines go below the current line, the cursor
+  to the first of them, one change for autosave/`+`. "!cmd: N lines, exit S".
+- `:r FILE`: the same insertion from a file.
+
+No pseudo-terminals on YasOS (pipes, poll, O_NONBLOCK and signals exist), so a
+program run by vi gets either the real console (`:!`) or no terminal at all.
+Tests: `tests/shell_command_tests.c` (the host's bash; `RUN_OUTPUT_PATH` points
+into `tests/build`).
+
+### Terminal Panel (`:term`)
+
+`termpanel.c` (no curses) runs a persistent `/usr/bin/bash` reading its
+commands from a pipe (`run_shell_piped`: stdin one pipe, stdout and stderr
+another; vi's ends `O_NONBLOCK` and `FD_CLOEXEC`, `TERM=dumb`). YasOS has no
+pseudo-terminals, so nothing in the panel has a terminal: vi, curses programs
+and password prompts do not work there (`:!` gives the real console), stdio
+output may arrive in blocks, and a program reading stdin reads the next lines
+typed. The panel echoes each sent line as `$ line` (the shell prints no prompt
+on a pipe). Output is cleaned for a text view (`termpanel_feed`: ANSI escapes
+dropped, `\r\n` ends a line, a lone `\r` restarts it, `\b`, tabs to 8,
+other control characters dropped), lines over 1024 bytes are split, and 500
+lines are kept (a ring). Ctrl-C does not signal the shell: it finds the
+shell's descendants through `/proc/PID/status` `PPid` lines
+(`termpanel_descendants`) and sends them SIGINT, as the console's Ctrl-C
+reaches only the foreground job. `termpanel_stop` SIGKILLs them and the shell
+and reaps it; the shell exiting by itself is noticed by `termpanel_poll`
+(`waitpid WNOHANG`) as "[shell exited N]", and Enter starts a new one.
+
+`editor.c`: `Editor.terminal` (allocated by `:term`, freed by Ctrl-W c,
+`:termclose` and exit). The panel takes `rows` (a third of the window, at
+least 5, leaving 3 text rows) between the text and the toolbar: every height
+of the text area goes through `editor_bottom_height` (toolbar + panel), and
+opening it moves the cursor up into the text that is left
+(`editor_fit_cursor_to_text`). `editor_draw_terminal` redraws the whole panel
+each time (title in reverse video, output newest at the bottom with long lines
+wrapped, `$ ` and the typed line); with the focus there the cursor sits at
+the end of the typed line. `main.c` redraws when `editor_idle` (which calls
+`termpanel_poll`) says output arrived, not only after a key.
+
+Keys (`editor_terminal_handles_key`, right after recording, so the panel's
+keys are recorded too): with the focus in the panel, printable keys edit the
+line, Enter sends it, Backspace (127, ^H), Ctrl-U clears, Up/Down history (16
+lines), PgUp/PgDn scroll (`[+N]` in the title), Ctrl-C interrupt, Ctrl-D on
+an empty line closes the shell's stdin, Esc and Ctrl-K go back to the text.
+From the text in normal mode, Ctrl-J goes down to the panel: yasos_curses
+turns CR and LF both into `\n`, so Ctrl-J is Enter, which does nothing else in
+normal mode (insert mode keeps it). Ctrl-W then j/k/w (move) or c (close)
+works from either window except while typing text, a command or a search.
+Ctrl-H/L still move between the file manager and the text.
+
 ### Built-in Help (`:help`)
 
 `:help` (also its prefixes `:h`, `:he`, `:hel`) shows the command reference in
@@ -405,6 +624,18 @@ highlighter (`c-sdk` as C, `zig` as Zig, anything else plain). Which language
 a row starts in is carried in `HighlightContext.lang_state`, stored per row as
 `highlight_lang_state`: a filetype-private int that, like the comment/string
 state, the first row starts at 0 and `buffer_row_rehighlight` cascades on.
+
+Configuration files (`filetypes/conf.c`: `.conf` -- so `vi.conf` --
+`.yasvirc`, `.cfg`, `.ini`, `.toml`, git's, and by whole name `fstab` and
+`inittab` through `Filetype.filenames`, which `filetype_by_extension` checks
+first) highlight whole-line `#`/`;` comments, `[section]`, a leading `set`,
+the key -- yasvi's settings (`vi_settings`: config.c's and make.c's; keep it
+in step) as keywords, a `no` before one as a literal, any other key as a
+type, so a misspelt setting shows in another colour -- then `=` `:` `?` and
+the value: numbers and on/off/yes/no/true/false/wait/exec as literals,
+quoted strings, `$VAR`, and `%` (`:make`'s current file). A `#` later in a
+line is part of the value, as config.c reads it. Test:
+`tests/conf_highlight_tests.c`.
 
 ## Development Notes
 

@@ -23,6 +23,7 @@
 
 // Include built-in filetype definitions
 #include "c.h"
+#include "conf.h"
 #include "shell.h"
 #include "pio.h"
 #include "zig.h"
@@ -33,6 +34,7 @@ const Filetype* g_filetypes[] = {
   &g_filetype_shell,
   &g_filetype_zig,
   &g_filetype_pio,
+  &g_filetype_conf,
 };
 
 const size_t g_num_filetypes = sizeof(g_filetypes) / sizeof(g_filetypes[0]);
@@ -42,8 +44,20 @@ const Filetype* filetype_by_extension(const char* filename) {
     return NULL;
   }
 
+  // Whole names first ("fstab")
+  const char* slash = strrchr(filename, '/');
+  const char* base = slash != NULL ? slash + 1 : filename;
+  for (size_t i = 0; i < g_num_filetypes; ++i) {
+    const Filetype* ft = g_filetypes[i];
+    for (const char** n = ft->filenames; n != NULL && *n != NULL; ++n) {
+      if (strcmp(base, *n) == 0) {
+        return ft;
+      }
+    }
+  }
+
   // Find the last dot in filename
-  const char* ext = strrchr(filename, '.');
+  const char* ext = strrchr(base, '.');
   if (!ext) {
     return NULL;
   }

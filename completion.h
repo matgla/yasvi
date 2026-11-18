@@ -29,7 +29,8 @@
  *      wrapping round -- the nearest following match first;
  *   2. words of the other open buffers;
  *   3. the filetype's own words (keywords, types, Zig's @builtins);
- *   4. names in the ctags "tags" file.
+ *   4. names in the ctags "tags" file;
+ *   5. names in the system's tags file (the C library's headers, for C).
  *
  * Duplicates are dropped, and so is the word being completed. This file holds
  * no editor or ncurses state, so all of it runs in the host tests. */
@@ -46,6 +47,7 @@ typedef struct {
   const Buffer* const* others;  // other open buffers (may include `current`, skipped)
   size_t number_of_others;
   const char* tags_path;        // tags file, or NULL
+  const char* system_tags_path; // the C library's tags (YASVI_SYSTEM_TAGS), or NULL
 } CompletionSources;
 
 /* The column where the word ending at `cursor` starts, in `line` of `len`.

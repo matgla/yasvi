@@ -419,11 +419,11 @@ void test_make_set_command(void) {
   enter_command(&editor, "set makeprg=tcc -o x x.c");
   TEST_CHECK(editor.make != NULL);
   check_string(editor.make->config.makeprg, "tcc -o x x.c");
-  check_string(message(&editor), "makeprg=tcc -o x x.c makemode=wait");
+  check_string(message(&editor), "norecord noautoindent makeprg=tcc -o x x.c makemode=wait");
   enter_command(&editor, "set makemode=exec");
   TEST_CHECK(editor.make->config.mode == MakeMode_Exec);
   enter_command(&editor, "set");
-  check_string(message(&editor), "makeprg=tcc -o x x.c makemode=exec");
+  check_string(message(&editor), "norecord noautoindent makeprg=tcc -o x x.c makemode=exec");
   enter_command(&editor, "set makemode=later");
   TEST_CHECK(strstr(message(&editor), "makemode is wait or exec") != NULL);
   TEST_CHECK(editor.make->config.mode == MakeMode_Exec);

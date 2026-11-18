@@ -19,6 +19,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "config.h"
 #include "editor.h"
 #include "window.h"
 
@@ -44,8 +45,9 @@ int main(int argc, char* argv[]) {
     .string_rendering_ongoing = false,
   };
   editor_init(&editor);
+  config_init(&editor.config);  // the defaults, before vi.conf
   editor_set_program_path(&editor, argv[0]);
-  editor_load_config(&editor);  // .yasvirc: makeprg, makemode
+  editor_load_config(&editor);  // ~/.config/vi.conf, then .yasvirc
   if (argc > 2 && strcmp(argv[1], "-S") == 0) {
     // vi -S FILE: back from a makemode=exec build
     if (!editor_restore_session(&editor, argv[2])) {
@@ -57,8 +59,9 @@ int main(int argc, char* argv[]) {
     editor_create_new_file(&editor);
   }
 
+  bool redraw = true;
   while (true) {
-    if (key >= 0) {
+    if (key >= 0 || redraw) {
       editor_redraw_screen(&editor);
     }
     key = getch();
@@ -69,7 +72,7 @@ int main(int argc, char* argv[]) {
         break;
       }
     }
-    editor_idle(&editor);
+    redraw = editor_idle(&editor);  // :term output arrived
   }
   editor_deinit(&editor);
   return 0;

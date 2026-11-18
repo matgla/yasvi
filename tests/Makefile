@@ -10,10 +10,10 @@ LDFLAGS += -fsanitize=address
 endif
 
 # System Under Test sources (will be compiled with tests)
-SUT_SRCS = ../autosave.c ../buffer.c ../buffer_row.c ../command.c ../completion.c ../help.c ../search.c ../tags.c \
+SUT_SRCS = ../autosave.c ../buffer.c ../config.c ../fileops.c ../indent.c ../record.c ../termpanel.c ../buffer_row.c ../command.c ../completion.c ../help.c ../search.c ../tags.c \
            ../make.c ../man.c ../run.c \
            ../filetypes/filetype.c ../filetypes/c.c ../filetypes/shell.c \
-           ../filetypes/zig.c ../filetypes/pio.c
+           ../filetypes/zig.c ../filetypes/pio.c ../filetypes/conf.c
 
 # File manager sources (need ncurses)
 FM_SRCS = ../file_manager.c
@@ -33,6 +33,7 @@ TEST_NAMES = buffer_tests command_tests \
              buffer_row_highlight_tests \
              zig_highlight_tests \
              pio_highlight_tests \
+             conf_highlight_tests \
              completion_tests \
              buffer_lifecycle_tests \
              buffer_row_management_tests \
@@ -51,7 +52,12 @@ TEST_NAMES = buffer_tests command_tests \
              toolbar_layout_tests \
              autosave_tests \
              man_tests \
-             make_tests
+             make_tests \
+             record_tests \
+             shell_command_tests \
+             termpanel_tests \
+             file_ops_tests \
+             indent_tests
 
 TEST_BINS = $(patsubst %,build/%,$(TEST_NAMES))
 
@@ -88,6 +94,9 @@ build/zig_highlight_tests: zig_highlight_tests.c $(SUT_SRCS) acutest.h | build
 build/pio_highlight_tests: pio_highlight_tests.c $(SUT_SRCS) acutest.h | build
 	$(CC) $(CFLAGS) -o $@ pio_highlight_tests.c $(SUT_SRCS) $(LDFLAGS)
 
+build/conf_highlight_tests: conf_highlight_tests.c $(SUT_SRCS) acutest.h | build
+	$(CC) $(CFLAGS) -o $@ conf_highlight_tests.c $(SUT_SRCS) $(LDFLAGS)
+
 build/completion_tests: completion_tests.c $(SUT_SRCS) acutest.h | build
 	$(CC) $(CFLAGS) -o $@ completion_tests.c $(SUT_SRCS) $(LDFLAGS)
 
@@ -108,7 +117,8 @@ build/buffer_file_tests: buffer_file_tests.c $(SUT_SRCS) acutest.h | build
 
 # Editor tests use a special build that compiles editor.c with mock ncurses
 # We use -include to force mock_ncurses.h to be included first, and -D to prevent real ncurses
-EDITOR_TEST_CFLAGS = $(CFLAGS) -include mock_ncurses.h -D__NCURSES_H
+EDITOR_TEST_CFLAGS = $(CFLAGS) -include mock_ncurses.h -D__NCURSES_H \
+                     -DYASVI_SYSTEM_TAGS='"/tmp/yasvi_libc_test.tags"'
 
 build/editor_state_tests: editor_state_tests.c $(SUT_SRCS) $(MOCK_SRCS) $(TOOLBAR_SRCS) $(FM_SRCS) ../editor.c ../window.c acutest.h mock_ncurses.h | build
 	$(CC) $(EDITOR_TEST_CFLAGS) -o $@ editor_state_tests.c $(SUT_SRCS) $(MOCK_SRCS) $(TOOLBAR_SRCS) $(FM_SRCS) ../editor.c ../window.c $(LDFLAGS)
@@ -154,6 +164,21 @@ MAKE_TEST_PATHS = -DMAKE_LOG_PATH='"build/yasvi-make-test.log"' \
 
 build/make_tests: make_tests.c $(SUT_SRCS) $(MOCK_SRCS) $(TOOLBAR_SRCS) $(FM_SRCS) ../editor.c ../window.c acutest.h mock_ncurses.h | build
 	$(CC) $(EDITOR_TEST_CFLAGS) $(MAKE_TEST_PATHS) -o $@ make_tests.c $(SUT_SRCS) $(MOCK_SRCS) $(TOOLBAR_SRCS) $(FM_SRCS) ../editor.c ../window.c $(LDFLAGS)
+
+build/record_tests: record_tests.c $(SUT_SRCS) $(MOCK_SRCS) $(TOOLBAR_SRCS) $(FM_SRCS) ../editor.c ../window.c acutest.h mock_ncurses.h | build
+	$(CC) $(EDITOR_TEST_CFLAGS) $(MAKE_TEST_PATHS) -o $@ record_tests.c $(SUT_SRCS) $(MOCK_SRCS) $(TOOLBAR_SRCS) $(FM_SRCS) ../editor.c ../window.c $(LDFLAGS)
+
+build/shell_command_tests: shell_command_tests.c $(SUT_SRCS) $(MOCK_SRCS) $(TOOLBAR_SRCS) $(FM_SRCS) ../editor.c ../window.c acutest.h mock_ncurses.h | build
+	$(CC) $(EDITOR_TEST_CFLAGS) $(MAKE_TEST_PATHS) -DRUN_OUTPUT_PATH='"build/yasvi-cmd-test.out"' -o $@ shell_command_tests.c $(SUT_SRCS) $(MOCK_SRCS) $(TOOLBAR_SRCS) $(FM_SRCS) ../editor.c ../window.c $(LDFLAGS)
+
+build/file_ops_tests: file_ops_tests.c $(SUT_SRCS) $(MOCK_SRCS) $(TOOLBAR_SRCS) $(FM_SRCS) ../editor.c ../window.c acutest.h mock_ncurses.h | build
+	$(CC) $(EDITOR_TEST_CFLAGS) $(MAKE_TEST_PATHS) -o $@ file_ops_tests.c $(SUT_SRCS) $(MOCK_SRCS) $(TOOLBAR_SRCS) $(FM_SRCS) ../editor.c ../window.c $(LDFLAGS)
+
+build/indent_tests: indent_tests.c $(SUT_SRCS) $(MOCK_SRCS) $(TOOLBAR_SRCS) $(FM_SRCS) ../editor.c ../window.c acutest.h mock_ncurses.h | build
+	$(CC) $(EDITOR_TEST_CFLAGS) $(MAKE_TEST_PATHS) -o $@ indent_tests.c $(SUT_SRCS) $(MOCK_SRCS) $(TOOLBAR_SRCS) $(FM_SRCS) ../editor.c ../window.c $(LDFLAGS)
+
+build/termpanel_tests: termpanel_tests.c $(SUT_SRCS) $(MOCK_SRCS) $(TOOLBAR_SRCS) $(FM_SRCS) ../editor.c ../window.c acutest.h mock_ncurses.h | build
+	$(CC) $(EDITOR_TEST_CFLAGS) $(MAKE_TEST_PATHS) -o $@ termpanel_tests.c $(SUT_SRCS) $(MOCK_SRCS) $(TOOLBAR_SRCS) $(FM_SRCS) ../editor.c ../window.c $(LDFLAGS)
 
 run: $(TEST_BINS)
 	@for test in $(TEST_NAMES); do \

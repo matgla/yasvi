@@ -223,6 +223,7 @@ void test_buffer_join_updates_links(void) {
   TEST_CHECK(strcmp(buffer->head->data, "A") == 0);
   TEST_CHECK(strcmp(buffer->head->next->data, "BC") == 0);
   TEST_CHECK(strcmp(buffer->tail->data, "D") == 0);
+  TEST_CHECK(buffer->current_row == buffer->head->next);  // the joined line
 
   // Verify prev/next links
   TEST_CHECK(buffer->head->prev == NULL);

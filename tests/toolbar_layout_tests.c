@@ -211,7 +211,33 @@ void test_toolbar_position_holds_still_when_a_key_sequence_appears(void) {
   toolbar_deinit(&toolbar);
 }
 
+/* A message wider than the screen starts at the left edge (it is cut when
+   drawn) instead of at a negative column, where nothing is drawn. */
+void test_toolbar_long_message_starts_on_screen(void) {
+  Toolbar toolbar;
+  toolbar_setup(&toolbar);
+  Buffer* buffer = buffer_with_lines(3);
+  Editor editor;
+  editor_setup(&editor, buffer);
+  char long_message[200];
+  memset(long_message, 'x', sizeof(long_message) - 1);
+  long_message[sizeof(long_message) - 1] = '\0';
+  editor.error_message = long_message;
+
+  toolbar_update(&toolbar, &editor);
+  toolbar_layout(&toolbar);
+  Widget* message = toolbar_find_widget(&toolbar, "message");
+  TEST_ASSERT(message != NULL);
+  TEST_CHECK(message->visible);
+  TEST_CHECK(message->cached_x == 0);
+
+  editor.error_message = NULL;
+  toolbar_deinit(&toolbar);
+  buffer_free(buffer);
+}
+
 TEST_LIST = {
+    {"test_toolbar_long_message_starts_on_screen", test_toolbar_long_message_starts_on_screen},
     {"test_toolbar_command_widget_is_on_its_own_row",
      test_toolbar_command_widget_is_on_its_own_row},
     {"test_toolbar_command_starts_at_begin_of_line",

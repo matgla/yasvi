@@ -232,6 +232,9 @@ void toolbar_layout(Toolbar* toolbar) {
     int center_width = calculate_list_width(toolbar->center_widgets, row);
     if (center_width > 0) {
       x = (toolbar->width - center_width) / 2;
+      if (x < 0) {
+        x = 0;  // wider than the screen: start at the left, draw cuts it
+      }
       for (Widget* w = toolbar->center_widgets; w != NULL; w = w->next) {
         if (widget_takes_space(w, row)) {
           w->cached_x = x;

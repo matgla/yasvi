@@ -115,6 +115,11 @@ typedef struct {
   int tag_stack_size;
   void* completion;  // struct Completion*
   void* make;        // struct MakeState*
+  struct {
+    bool record;
+  } config;        // EditorConfig (config.h)
+  void* recorder;  // struct Recorder*
+  void* terminal;  // struct TermPanel*
 } Editor;
 
 /* External functions */
@@ -566,6 +571,41 @@ void test_editor_tag_without_tags_file(void) {
   tag_fixture_leave(&editor);
 }
 
+// The C library's tags (YASVI_SYSTEM_TAGS, a temp file here): :tag and
+// Ctrl-N fall back to them in a C file, with or without project tags.
+void test_editor_system_tags(void) {
+  for (int with_tags = 0; with_tags < 2; ++with_tags) {
+    Editor editor;
+    tag_fixture_enter(&editor, with_tags != 0);
+    char header[300];
+    snprintf(header, sizeof(header), "%s/stdio.h", tag_dir);
+    tag_write("stdio.h", "/* libc */\nint puts(const char *s);\n");
+    FILE* tags = fopen(YASVI_SYSTEM_TAGS, "w");
+    TEST_ASSERT(tags != NULL);
+    fprintf(tags, "!_TAG_FILE_SORTED\t1\t/0=unsorted/\n"
+                  "puts\t%s\t/^int puts(const char *s);$/;\"\tp\n", header);
+    fclose(tags);
+
+    // Ctrl-N offers libc's puts after "pu"
+    editor_process_key(&editor, 'O');
+    editor_process_key(&editor, 'p');
+    editor_process_key(&editor, 'u');
+    editor_process_key(&editor, 0x0e);
+    TEST_CHECK(strcmp(editor.current_buffer->current_row->data, "puts") == 0);
+    TEST_MSG("line is [%s]", editor.current_buffer->current_row->data);
+    editor_process_key(&editor, 27);
+
+    enter_command(&editor, "tag puts");
+    TEST_CHECK(strcmp(tag_current_file(&editor), header) == 0);
+    TEST_MSG("in [%s]", tag_current_file(&editor));
+    TEST_CHECK(buffer_get_current_line_number(editor.current_buffer) == 2);
+
+    unlink(YASVI_SYSTEM_TAGS);
+    unlink("stdio.h");
+    tag_fixture_leave(&editor);
+  }
+}
+
 void test_editor_command_help_opens_help_buffer(void) {
   Editor editor;
   setup_editor(&editor);
@@ -593,6 +633,7 @@ void test_editor_command_help_opens_help_buffer(void) {
 }
 
 TEST_LIST = {
+    {"test_editor_system_tags", test_editor_system_tags},
     {"test_editor_command_quit", test_editor_command_quit},
     {"test_editor_command_invalid", test_editor_command_invalid},
     {"test_editor_command_empty", test_editor_command_empty},

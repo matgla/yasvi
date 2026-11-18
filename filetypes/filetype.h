@@ -59,9 +59,13 @@ typedef struct Filetype {
   // Characters that may start a word but not continue one, such as Zig's '@'
   // in @import. NULL or "" when words are plain identifiers.
   const char* word_prefix_chars;
+  // Whole file names (no directory) for files without an extension, such
+  // as "fstab"; NULL-terminated, may be NULL.
+  const char** filenames;
 } Filetype;
 
-// Lookup functions
+// Lookup functions. filetype_by_extension also matches whole file names
+// (Filetype.filenames).
 const Filetype* filetype_by_extension(const char* filename);
 const Filetype* filetype_by_shebang(const char* first_line);
 const Filetype* filetype_detect(const char* filename, const char* first_line);
@@ -74,6 +78,7 @@ extern const Filetype g_filetype_c;
 extern const Filetype g_filetype_shell;
 extern const Filetype g_filetype_zig;
 extern const Filetype g_filetype_pio;
+extern const Filetype g_filetype_conf;
 
 // Registry of all built-in filetypes
 extern const Filetype* g_filetypes[];

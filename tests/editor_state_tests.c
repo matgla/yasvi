@@ -111,6 +111,11 @@ typedef struct {
   int tag_stack_size;
   void* completion;  // struct Completion*
   void* make;        // struct MakeState*
+  struct {
+    bool record;
+  } config;        // EditorConfig (config.h)
+  void* recorder;  // struct Recorder*
+  void* terminal;  // struct TermPanel*
 } Editor;
 
 /* Function declarations from editor.c that we need to test */

@@ -113,6 +113,11 @@ typedef struct {
   int tag_stack_size;
   void* completion;  // struct Completion*
   void* make;        // struct MakeState*
+  struct {
+    bool record;
+  } config;        // EditorConfig (config.h)
+  void* recorder;  // struct Recorder*
+  void* terminal;  // struct TermPanel*
 } Editor;
 
 /* Function declarations from editor.c */
@@ -289,14 +294,16 @@ void test_open_file_from_manager(void) {
   // Select the file (Enter)
   editor_process_key(&editor, '\n');
 
-  // Should be back in running mode with file loaded
+  // Keys go to the file; the tree stays shown. The blank buffer vi started
+  // with is replaced, not kept as a second tab.
   TEST_CHECK(editor.state == EditorState_Running);
-  TEST_CHECK(file_manager_is_visible(editor.file_manager) == false);
-  TEST_CHECK(editor.number_of_buffers == 2);
+  TEST_CHECK(file_manager_is_visible(editor.file_manager) == true);
+  TEST_CHECK(editor.number_of_buffers == 1);
+  TEST_CHECK(strstr(buffer_get_filename(editor.current_buffer), "testfile.txt") != NULL);
 
-  // Cursor should be at top-left of file (y = EDITOR_TOP_BAR_HEIGHT = 2)
+  // Cursor at the top-left of the text, right of the tree
   TEST_CHECK(editor.cursor.y == 2);
-  TEST_CHECK(editor.cursor.x == 4);
+  TEST_CHECK(editor.cursor.x == 4 + editor.file_manager->width);
   TEST_CHECK(editor.start_line == 0);
   TEST_CHECK(editor.start_column == 0);
 
@@ -383,13 +390,19 @@ void test_ctrl_h_l_window_switch(void) {
   editor_process_key(&editor, 8);
   TEST_CHECK(editor.state == EditorState_FileManager);
 
-  // Ctrl+L switches back to the editor window and closes the sidebar
+  // Ctrl+L switches back to the editor window; the sidebar stays
   editor_process_key(&editor, 12);  // Ctrl+L
   TEST_CHECK(editor.state == EditorState_Running);
-  TEST_CHECK(file_manager_is_visible(editor.file_manager) == false);
+  TEST_CHECK(file_manager_is_visible(editor.file_manager) == true);
 
   // Ctrl+L in the editor window does nothing - no window to the right
   editor_process_key(&editor, 12);
+  TEST_CHECK(editor.state == EditorState_Running);
+  TEST_CHECK(file_manager_is_visible(editor.file_manager) == true);
+
+  // q in the tree closes it
+  editor_process_key(&editor, 8);
+  editor_process_key(&editor, 'q');
   TEST_CHECK(editor.state == EditorState_Running);
   TEST_CHECK(file_manager_is_visible(editor.file_manager) == false);
 
@@ -414,10 +427,10 @@ void test_ctrl_h_refocuses_visible_sidebar(void) {
   TEST_CHECK(editor.state == EditorState_FileManager);
   TEST_CHECK(file_manager_is_visible(editor.file_manager) == true);
 
-  // Ctrl+L closes it and returns to the editor
+  // Ctrl+L returns to the editor and leaves it shown
   editor_process_key(&editor, 12);  // Ctrl+L
   TEST_CHECK(editor.state == EditorState_Running);
-  TEST_CHECK(file_manager_is_visible(editor.file_manager) == false);
+  TEST_CHECK(file_manager_is_visible(editor.file_manager) == true);
 
   editor_deinit(&editor);
 }

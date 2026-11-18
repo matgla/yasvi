@@ -393,10 +393,12 @@ int buffer_join_current_line_with_previous(Buffer* buffer) {
     return number_of_chars;
   }
   number_of_chars = current->len;
-  buffer_row_append_str(current->prev, current->data, current->len);
-  // buffer_remove_current_row already updates buffer->current_row
-  // so we don't need to do it again here
+  BufferRow* previous = current->prev;
+  buffer_row_append_str(previous, current->data, current->len);
   buffer_remove_current_row(buffer);
+  // The joined line is the current one (buffer_remove_current_row moves to
+  // the line below when there is one).
+  buffer->current_row = previous;
   return number_of_chars + 1;
 }
 

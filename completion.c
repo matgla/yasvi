@@ -201,6 +201,9 @@ void completion_collect(CompletionList* out,
   if (sources->tags_path != NULL) {
     tags_for_each_name(sources->tags_path, prefix, completion_visit_tag, &collector);
   }
+  if (sources->system_tags_path != NULL) {
+    tags_for_each_name(sources->system_tags_path, prefix, completion_visit_tag, &collector);
+  }
 }
 
 void completion_list_free(CompletionList* list) {

@@ -22,6 +22,7 @@
 #include "mock_ncurses.h"
 
 #include "editor.h"
+#include "help.h"
 #include "man.h"
 
 #include <stdio.h>
@@ -480,7 +481,40 @@ void test_man_k_falls_back_to_identifier(void) {
   remove_temp_dir();
 }
 
+// :q in :help or a :man page closes it (like vim's help window) and goes
+// back to the file; in the file, or with nothing else open, vi exits.
+void test_quit_closes_help_and_man_buffers(void) {
+  make_temp_dir();
+  char manpath[200];
+  make_man_dirs(manpath, sizeof(manpath));
+  write_file(path_in_dir("d1/printf.txt"), "PRINTF(3)\n");
+  setenv("MANPATH", manpath, 1);
+  Editor editor;
+  setup_editor(&editor);
+  editor_create_new_file(&editor);
+
+  enter_command(&editor, "help");
+  TEST_CHECK(editor.number_of_buffers == 2);
+  TEST_CHECK(strcmp(current_name(&editor), HELP_BUFFER_NAME) == 0);
+  enter_command(&editor, "q");
+  TEST_CHECK(!editor_should_exit(&editor));
+  TEST_CHECK(editor.number_of_buffers == 1);
+  TEST_CHECK(!editor.current_buffer->autosave_disabled);
+
+  enter_command(&editor, "man printf");
+  TEST_CHECK(editor.number_of_buffers == 2);
+  enter_command(&editor, "q");
+  TEST_CHECK(!editor_should_exit(&editor));
+  TEST_CHECK(editor.number_of_buffers == 1);
+
+  enter_command(&editor, "q");  // the file: vi exits
+  TEST_CHECK(editor_should_exit(&editor));
+  editor_deinit(&editor);
+  remove_temp_dir();
+}
+
 TEST_LIST = {
+  {"quit_closes_help_and_man_buffers", test_quit_closes_help_and_man_buffers},
   {"man_find_plain_page", test_man_find_plain_page},
   {"man_find_gzipped_page", test_man_find_gzipped_page},
   {"man_plain_before_gzipped_in_one_dir", test_man_plain_before_gzipped_in_one_dir},

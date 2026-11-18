@@ -180,6 +180,37 @@ void test_tag_names_come_last(void) {
   unlink(path);
 }
 
+// The system's tags (the C library's) come after the project's.
+void test_system_tags_come_last(void) {
+  char project[] = "/tmp/yasvi_tags_XXXXXX";
+  char system[] = "/tmp/yasvi_systags_XXXXXX";
+  int fd = mkstemp(project);
+  TEST_ASSERT(fd >= 0);
+  FILE* file = fdopen(fd, "w");
+  fputs("print_all\tsrc/p.c\t20;\"\tf\n", file);
+  fclose(file);
+  fd = mkstemp(system);
+  TEST_ASSERT(fd >= 0);
+  file = fdopen(fd, "w");
+  fputs("print_all\t/usr/include/x.h\t1;\"\tp\n", file);
+  fputs("printf\t/usr/include/stdio.h\t1;\"\tp\n", file);
+  fclose(file);
+
+  const char* lines[] = {"pri", NULL};
+  Buffer* buffer = make_buffer(lines, 0, NULL);
+  CompletionSources sources = {.current = buffer, .tags_path = project,
+                               .system_tags_path = system};
+  CompletionList list;
+  completion_collect(&list, "pri", 0, &sources);
+  TEST_CHECK(list.count == 2);
+  TEST_CHECK(index_of(&list, "print_all") == 0);
+  TEST_CHECK(index_of(&list, "printf") == 1);
+  completion_list_free(&list);
+  buffer_free(buffer);
+  unlink(project);
+  unlink(system);
+}
+
 void test_list_is_capped(void) {
   Buffer* buffer = buffer_alloc();
   char word[32];
@@ -219,6 +250,7 @@ void test_step_walks_round_through_the_typed_word(void) {
 }
 
 TEST_LIST = {
+  {"system_tags_come_last", test_system_tags_come_last},
   {"test_word_start_plain_identifier", test_word_start_plain_identifier},
   {"test_word_start_takes_a_leading_prefix_char", test_word_start_takes_a_leading_prefix_char},
   {"test_nearest_following_word_comes_first", test_nearest_following_word_comes_first},
