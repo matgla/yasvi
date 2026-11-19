@@ -26,6 +26,9 @@ static int last_y = 0;
 static int last_x = 0;
 static char last_string[MAX_STRING_LEN] = {0};
 static attr_t current_attr = A_NORMAL;
+// Every character addch drew since the last reset (truncated when full).
+static char added[4096];
+static int added_length = 0;
 
 WINDOW mock_stdscr = {24, 80};
 WINDOW* stdscr = &mock_stdscr;
@@ -34,6 +37,8 @@ void mock_ncurses_reset(void) {
   last_y = 0;
   last_x = 0;
   last_string[0] = '\0';
+  added_length = 0;
+  added[0] = '\0';
   current_attr = A_NORMAL;
   mock_stdscr._maxy = 24;
   mock_stdscr._maxx = 80;
@@ -45,6 +50,10 @@ int mock_ncurses_get_last_y(void) {
 
 int mock_ncurses_get_last_x(void) {
   return last_x;
+}
+
+const char* mock_ncurses_get_added(void) {
+  return added;
 }
 
 const char* mock_ncurses_get_last_string(void) {
@@ -93,7 +102,10 @@ int attrset(attr_t attrs) {
 }
 
 int addch(chtype ch) {
-  (void)ch;
+  if (added_length < (int)sizeof(added) - 1) {
+    added[added_length++] = (char)ch;
+    added[added_length] = '\0';
+  }
   return 0;
 }
 

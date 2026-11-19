@@ -33,6 +33,7 @@ static void toolbar_setup(Toolbar* toolbar) {
   toolbar_add_widget(toolbar, widget_mode_create());
   toolbar_add_widget(toolbar, widget_filename_create());
   toolbar_add_widget(toolbar, widget_position_create());
+  toolbar_add_widget(toolbar, widget_indent_create());
   toolbar_add_widget(toolbar, widget_command_create());
   toolbar_add_widget(toolbar, widget_message_create());
   toolbar_add_widget(toolbar, widget_keyseq_create());
@@ -157,6 +158,34 @@ void test_toolbar_filename_holds_still_when_the_mode_changes(void) {
   toolbar_deinit(&toolbar);
 }
 
+// "tabs:4" / "spaces:2" sits just left of the position, and follows :set.
+void test_toolbar_indent_left_of_position(void) {
+  Toolbar toolbar;
+  toolbar_setup(&toolbar);
+  Buffer* buffer = buffer_with_lines(3);
+  Editor editor;
+  editor_setup(&editor, buffer);
+  editor.tab_size = 2;
+
+  Widget* indent = toolbar_find_widget(&toolbar, "indent");
+  Widget* position = toolbar_find_widget(&toolbar, "position");
+  TEST_ASSERT(indent != NULL && position != NULL);
+
+  toolbar_update(&toolbar, &editor);
+  TEST_CHECK(indent->row == 0);
+  TEST_CHECK(indent->cached_width == (int)strlen("spaces:2"));
+  TEST_CHECK(indent->cached_x + indent->cached_width + 1 == position->cached_x);
+
+  buffer->indent = BufferIndent_Tabs;
+  editor.config.tabstop = 4;
+  toolbar_update(&toolbar, &editor);
+  TEST_CHECK(indent->cached_width == (int)strlen("tabs:4"));
+  TEST_CHECK(indent->cached_x + indent->cached_width + 1 == position->cached_x);
+
+  buffer_free(buffer);
+  toolbar_deinit(&toolbar);
+}
+
 void test_toolbar_position_holds_still_as_the_cursor_moves(void) {
   Toolbar toolbar;
   toolbar_setup(&toolbar);
@@ -248,6 +277,7 @@ TEST_LIST = {
      test_toolbar_command_row_is_below_main_row},
     {"test_toolbar_filename_holds_still_when_the_mode_changes",
      test_toolbar_filename_holds_still_when_the_mode_changes},
+    {"test_toolbar_indent_left_of_position", test_toolbar_indent_left_of_position},
     {"test_toolbar_position_holds_still_as_the_cursor_moves",
      test_toolbar_position_holds_still_as_the_cursor_moves},
     {"test_toolbar_position_holds_still_when_a_key_sequence_appears",

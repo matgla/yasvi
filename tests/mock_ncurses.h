@@ -104,3 +104,5 @@ void mock_ncurses_reset(void);
 int mock_ncurses_get_last_y(void);
 int mock_ncurses_get_last_x(void);
 const char* mock_ncurses_get_last_string(void);
+// The characters addch drew since mock_ncurses_reset.
+const char* mock_ncurses_get_added(void);

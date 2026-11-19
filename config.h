@@ -32,13 +32,42 @@
 //   autoindent / noautoindent (ai)     indent new lines and closing brackets
 //                                      (indent.h); on unless turned off, off
 //                                      for pasting into the terminal
+//   tabstop=N (ts)                     columns a tab character is drawn
+//                                      to, 1-32 (8)
+//   expandtab / noexpandtab (et)       Tab and indentation insert spaces /
+//                                      tab characters, for files whose
+//                                      indentation does not say (on);
+//                                      Makefiles always use tabs
+//   shiftwidth=N (sw)                  spaces per indent step for files
+//                                      whose indentation does not say; 0
+//                                      takes the editor's tab_size
+// In a session, :set expandtab and :set shiftwidth change the current file
+// only (editor.c); here they are the defaults. A boolean also takes "key!",
+// which turns it over.
 
 #define CONFIG_FILE_NAME "vi.conf"
+#define CONFIG_DEFAULT_TABSTOP 8
+#define CONFIG_MAX_WIDTH 32
 
+// Every field is false/0 in a zeroed Editor, as the tests make it: so the
+// default "expandtab" is held as `noexpandtab`, and a tabstop of 0 means
+// CONFIG_DEFAULT_TABSTOP. Small fields: test files keep copies of Editor.
 typedef struct {
   bool record;
   bool autoindent;
+  bool noexpandtab;
+  unsigned char tabstop;
+  unsigned char shiftwidth;
 } EditorConfig;
+
+// The setting a :set line names, for those editor.c treats specially.
+typedef enum {
+  ConfigSetting_Unknown,     // not one of config.c's
+  ConfigSetting_Other,       // record, autoindent
+  ConfigSetting_Tabstop,     // redraws the screen
+  ConfigSetting_Expandtab,   // per file in a session
+  ConfigSetting_Shiftwidth,  // per file in a session
+} ConfigSetting;
 
 typedef enum {
   ConfigSet_Ok,
@@ -54,8 +83,15 @@ void config_init(EditorConfig* config);
 // and for a boolean also "key" (on), "nokey" (off) and "key?" (query).
 ConfigSetResult config_set(EditorConfig* config, const char* line);
 
-// Every setting, as "norecord autoindent", into `out`.
+ConfigSetting config_setting_of(const char* line);
+
+// Every setting, as "norecord autoindent expandtab tabstop=8 shiftwidth=0",
+// into `out`.
 void config_describe(const EditorConfig* config, char* out, size_t size);
+
+// What the setting `line` names takes, for a ConfigSet_BadValue: "tabstop is
+// a number from 1 to 32", "record is on or off".
+void config_expected_value(const char* line, char* out, size_t size);
 
 // The setting a config_set `line` names, as "noautoindent", into `out`
 // (every setting when it names none).

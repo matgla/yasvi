@@ -738,8 +738,41 @@ static void editor_set_error_message(Editor* editor, const char* message) {
   editor_redraw_screen(editor);
 }
 
+// Tab characters are drawn up to the next multiple of this column (the
+// tabstop setting).
+static int editor_tab_stop(const Editor* editor) {
+  return editor->config.tabstop > 0 ? editor->config.tabstop : CONFIG_DEFAULT_TABSTOP;
+}
+
+// The screen columns the first `count` characters of `text` take.
+static int editor_display_width(const char* text, int count, int tab_stop) {
+  int width = 0;
+  for (int i = 0; i < count; ++i) {
+    width += text[i] == '\t' ? tab_stop - width % tab_stop : 1;
+  }
+  return width;
+}
+
+// The cursor is kept as a character index (cursor.x, start_column); on a
+// line with tabs the screen column is further right.
 static void editor_restore_cursor_position(const Editor* editor) {
-  move(editor->cursor.y, editor->cursor.x);
+  int x = editor->cursor.x;
+  const BufferRow* row =
+    editor->current_buffer != NULL ? buffer_get_current_line(editor->current_buffer) : NULL;
+  if (row != NULL && row->data != NULL) {
+    const int index = editor_get_cursor_x(editor);
+    const int end = index < row->len ? index : row->len;
+    const int start = editor->start_column < end ? editor->start_column : end;
+    if (end > 0 && memchr(row->data, '\t', (size_t)end) != NULL) {
+      const int tab_stop = editor_tab_stop(editor);
+      x = editor->number_of_line_digits + editor_display_width(row->data, end, tab_stop) -
+          editor_display_width(row->data, start, tab_stop) + (index - end);
+      if (x > editor->window.width - 1) {
+        x = editor->window.width - 1;
+      }
+    }
+  }
+  move(editor->cursor.y, x);
 }
 
 static void editor_move_cursor_to_start(Editor* editor) {
@@ -1119,16 +1152,30 @@ static void editor_decorate_and_draw_line(Editor* editor,
   move(line_number, line_number_width);
   attrset(COLOR_OTHER);
 
+  // A tab is drawn as spaces up to the next tab stop, counted from the start
+  // of the line, not of the window.
+  const int tab_stop = editor_tab_stop(editor);
+  const int first = editor_display_width(row->data, editor->start_column, tab_stop);
+  int display = first;
   EHighlightToken token = EHighlightToken_Normal;
-  for (int i = 0; i < row->len - editor->start_column && i < max_columns; ++i) {
-    if (line[i] == '\0') {
+  for (int i = 0; i < row->len - editor->start_column; ++i) {
+    if (line[i] == '\0' || display - first >= max_columns) {
       break;
     }
     if (token != (EHighlightToken)hl[i]) {
       token = (EHighlightToken)hl[i];
       attrset(editor_get_highlight_style(token));
     }
-    addch(line[i]);
+    if (line[i] == '\t') {
+      const int next = display + tab_stop - display % tab_stop;
+      while (display < next && display - first < max_columns) {
+        addch(' ');
+        ++display;
+      }
+    } else {
+      addch(line[i]);
+      ++display;
+    }
   }
 
   attrset(COLOR_OTHER);
@@ -1518,10 +1565,64 @@ static void editor_set_cursor_column(Editor* editor, int column) {
   }
 }
 
-// One indent step of the current buffer into `out` (EDITOR_INDENT_MAX).
+bool editor_uses_tabs(const Editor* editor) {
+  const Buffer* buffer = editor->current_buffer;
+  if (buffer == NULL) {
+    return editor->config.noexpandtab;
+  }
+  if (buffer->indent != BufferIndent_Default) {
+    return buffer->indent == BufferIndent_Tabs;
+  }
+  if (buffer->filetype != NULL && buffer->filetype->hard_tabs) {
+    return true;
+  }
+  bool tabs = false;
+  int step = 0;
+  if (indent_detect(buffer_get_first_row(buffer), &tabs, &step)) {
+    return tabs;
+  }
+  return editor->config.noexpandtab;
+}
+
+int editor_shift_width(const Editor* editor) {
+  const Buffer* buffer = editor->current_buffer;
+  if (buffer != NULL && buffer->shiftwidth > 0) {
+    return buffer->shiftwidth;
+  }
+  bool tabs = false;
+  int step = 0;
+  if (buffer != NULL && indent_detect(buffer_get_first_row(buffer), &tabs, &step) &&
+      !tabs) {
+    return step;
+  }
+  if (editor->config.shiftwidth > 0) {
+    return editor->config.shiftwidth;
+  }
+  return editor->tab_size > 0 ? editor->tab_size : 4;
+}
+
+void editor_describe_indent(const Editor* editor, char* out, size_t size) {
+  if (editor_uses_tabs(editor)) {
+    snprintf(out, size, "tabs:%d", editor_tab_stop(editor));
+  } else {
+    snprintf(out, size, "spaces:%d", editor_shift_width(editor));
+  }
+}
+
+// One indent step of the current buffer into `out` (EDITOR_INDENT_MAX): a
+// tab in tab mode (editor_uses_tabs), else shiftwidth spaces.
 static int editor_indent_unit(const Editor* editor, char* out) {
-  return indent_unit(buffer_get_first_row(editor->current_buffer), editor->tab_size, out,
-                     EDITOR_INDENT_MAX);
+  int length = 0;
+  if (editor_uses_tabs(editor)) {
+    out[length++] = '\t';
+  } else {
+    const int width = editor_shift_width(editor);
+    while (length < width && length < EDITOR_INDENT_MAX - 1) {
+      out[length++] = ' ';
+    }
+  }
+  out[length] = '\0';
+  return length;
 }
 
 // Appends `count` characters of `text` to `out` holding *length of them.
@@ -1532,10 +1633,10 @@ static void editor_indent_append(char* out, int* length, const char* text, int c
   out[*length] = '\0';
 }
 
-// The spaces Tab inserts at column `x`: tab_size, or in the indentation with
-// autoindent on, up to the next indent step.
+// The spaces Tab inserts at column `x`: shiftwidth, or in the indentation
+// with autoindent on, up to the next indent step.
 static int editor_indent_tab_count(const Editor* editor, const BufferRow* row, int x) {
-  const int fallback = editor->tab_size > 0 ? editor->tab_size : 1;
+  const int fallback = editor_shift_width(editor);
   if (!editor->config.autoindent || row == NULL || x > row->len ||
       indent_leading(row->data, x) != x || memchr(row->data, '\t', (size_t)x) != NULL) {
     return fallback;
@@ -1570,7 +1671,7 @@ static int editor_indent_backspace_count(const Editor* editor,
 // Returns the column for the cursor.
 static int editor_indent_closer(Editor* editor, BufferRow* row, int x) {
   const IndentLanguage language = editor_indent_language(editor);
-  if (!editor->config.autoindent || language == IndentLanguage_None || row == NULL ||
+  if (!editor->config.autoindent || !indent_has_brackets(language) || row == NULL ||
       x >= row->len || !indent_starts_with_closer(row->data + x, 1) ||
       indent_leading(row->data, x) != x) {
     return x + 1;
@@ -1641,7 +1742,7 @@ static void editor_insert_newline(Editor* editor) {
   }
   buffer_row_remove_chars(moved, 0, indent_leading(moved->data, moved->len));
   const bool closer =
-    language != IndentLanguage_None && indent_starts_with_closer(moved->data, moved->len);
+    indent_has_brackets(language) && indent_starts_with_closer(moved->data, moved->len);
   if (opens && closer) {
     // { | }: the } line keeps the old indentation, the cursor gets a line
     buffer_row_insert_chars(moved, 0, row->data, base);
@@ -1677,7 +1778,7 @@ static void editor_open_line_above(Editor* editor) {
   if (editor->config.autoindent) {
     editor_indent_append(indent, &indent_length, row->data,
                          indent_leading(row->data, row->len));
-    if (editor_indent_language(editor) != IndentLanguage_None &&
+    if (indent_has_brackets(editor_indent_language(editor)) &&
         indent_starts_with_closer(row->data, row->len)) {
       char unit[EDITOR_INDENT_MAX];
       const int unit_length = editor_indent_unit(editor, unit);
@@ -1766,13 +1867,15 @@ void editor_insert_char(Editor* editor, int key) {
       return;
     }
     case '\t': {
-      // Spaces: tab_size of them, or to the next indent step in the
-      // indentation when autoindent is on.
+      // A tab character in tab mode (editor_uses_tabs), else spaces:
+      // shiftwidth of them, or to the next indent step in the indentation
+      // when autoindent is on.
       g_autoindent_row = NULL;
       const int x = editor_get_cursor_x(editor);
-      const int count = editor_indent_tab_count(editor, current_row, x);
+      const bool hard = editor_uses_tabs(editor);
+      const int count = hard ? 1 : editor_indent_tab_count(editor, current_row, x);
       for (int i = 0; i < count; ++i) {
-        buffer_row_insert_char(current_row, x, ' ');
+        buffer_row_insert_char(current_row, x, hard ? '\t' : ' ');
       }
       editor_note_change(editor);
       editor_set_cursor_column(editor, x + count);
@@ -2430,7 +2533,7 @@ static void editor_handle_key(Editor* editor, int key) {
             editor_restore_cursor_position(editor);
             for (int i = 0; i < editor->repeat_count + 1; ++i) {
               editor_process_editor_key(editor, key);
-              move(editor->cursor.y, editor->cursor.x);
+              editor_restore_cursor_position(editor);
             }
             editor->repeat_count = 0;
             return;
@@ -2603,6 +2706,7 @@ void editor_init(Editor* editor) {
     toolbar_add_widget(editor->toolbar, widget_mode_create());
     toolbar_add_widget(editor->toolbar, widget_filename_create());
     toolbar_add_widget(editor->toolbar, widget_position_create());
+    toolbar_add_widget(editor->toolbar, widget_indent_create());
     toolbar_add_widget(editor->toolbar, widget_command_create());
     toolbar_add_widget(editor->toolbar, widget_message_create());
     toolbar_add_widget(editor->toolbar, widget_keyseq_create());
@@ -2624,7 +2728,7 @@ void editor_init(Editor* editor) {
 
   editor_home_cursor_xy(editor);
   editor->current_buffer_index = 0;
-  move(editor->cursor.y, editor->cursor.x);
+  editor_restore_cursor_position(editor);
 }
 
 void editor_deinit(Editor* editor) {
@@ -4006,7 +4110,7 @@ static bool editor_read_config_file(Editor* editor, const char* path) {
     const bool in_home = home_length > 1 && strncmp(path, home, home_length) == 0 &&
                          path[home_length] == '/';
     char message[256];
-    snprintf(message, sizeof(message), "%s%s:%d: unknown \"%s\"%s (record, ai, makeprg, makemode)",
+    snprintf(message, sizeof(message), "%s%s:%d: unknown \"%s\"%s (record, ai, ts, et, sw, makeprg, makemode)",
              in_home ? "~" : "", in_home ? path + home_length : path, read.first_bad_line,
              read.first_bad_text, more);
     editor->error_message = editor_strdup(message);
@@ -4310,23 +4414,50 @@ static CommandResult editor_set_option(Editor* editor, const char* args) {
     editor_set_error_message(editor, "Out of memory");
     return CommandResult_Error;
   }
+  // expandtab and shiftwidth are the current file's: set from (and "et!"
+  // turned over from) what it uses now, kept in the Buffer, and the
+  // defaults from vi.conf left as they were.
+  const ConfigSetting setting = config_setting_of(args);
+  Buffer* buffer = editor->current_buffer;
+  const bool local = buffer != NULL && (setting == ConfigSetting_Expandtab ||
+                                        setting == ConfigSetting_Shiftwidth);
+  const EditorConfig defaults = editor->config;
+  if (local) {
+    editor->config.noexpandtab = editor_uses_tabs(editor);
+    editor->config.shiftwidth = (unsigned char)editor_shift_width(editor);
+  }
   const ConfigSetResult config_result = config_set(&editor->config, args);
+  if (local) {
+    if (config_result == ConfigSet_Ok && setting == ConfigSetting_Expandtab) {
+      buffer->indent = editor->config.noexpandtab ? BufferIndent_Tabs : BufferIndent_Spaces;
+    } else if (config_result == ConfigSet_Ok) {
+      buffer->shiftwidth = editor->config.shiftwidth;
+    }
+  }
+  char options[64];
+  if (local && config_result != ConfigSet_BadValue) {
+    config_describe_setting(&editor->config, args, options, sizeof(options));
+  }
+  if (local) {
+    editor->config.noexpandtab = defaults.noexpandtab;
+    editor->config.shiftwidth = defaults.shiftwidth;
+  }
   if (config_result == ConfigSet_BadValue) {
-    char name[64];
     char error[96];
-    config_describe_setting(&editor->config, args, name, sizeof(name));
-    // "noautoindent" or "autoindent": the setting's name either way
-    snprintf(error, sizeof(error), "%s is on or off",
-             strncmp(name, "no", 2) == 0 ? name + 2 : name);
+    config_expected_value(args, error, sizeof(error));
     editor_set_error_message(editor, error);
     return CommandResult_Error;
   }
   if (!editor->config.record) {
     editor_record_stop(editor);
   }
-  char options[64];
+  if (config_result == ConfigSet_Ok && setting == ConfigSetting_Tabstop) {
+    editor_mark_dirty_whole_screen(editor);  // every tab is drawn again
+  }
   if (config_result == ConfigSet_Ok || config_result == ConfigSet_Query) {
-    config_describe_setting(&editor->config, args, options, sizeof(options));
+    if (!local) {
+      config_describe_setting(&editor->config, args, options, sizeof(options));
+    }
     editor_set_status_message(editor, options);
     return CommandResult_Success;
   }
@@ -4335,7 +4466,7 @@ static CommandResult editor_set_option(Editor* editor, const char* args) {
                                                 : MakeSet_Ignored) {
     case MakeSet_UnknownKey:
       editor_set_error_message(editor,
-                               "Unknown option (record, autoindent, makeprg, makemode)");
+                               "Unknown option (record, ai, ts, et, sw, makeprg, makemode)");
       return CommandResult_Error;
     case MakeSet_BadValue:
       editor_set_error_message(editor, "makemode is wait or exec");

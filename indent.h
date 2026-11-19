@@ -31,16 +31,22 @@
 // else or in -- and a closing } ) ] is put under the line that opened it.
 // Strings, character literals and line comments are skipped when brackets
 // are matched; block comments are not.
+// In a Makefile a rule line ("target: prerequisites") opens its recipe,
+// indented with a tab (Filetype.hard_tabs).
 
 typedef enum {
   IndentLanguage_None,     // plain text: keep the indentation of the line above
   IndentLanguage_Brackets,  // C, Zig, PIO
   IndentLanguage_Shell,     // brackets and then/do/else/in
+  IndentLanguage_Make,      // a rule line opens its recipe; no brackets
 } IndentLanguage;
 
-// The rules for a filetype name ("c", "zig", "pio", "shell"), None for NULL
-// or anything else.
+// The rules for a filetype name ("c", "zig", "pio", "shell", "make"), None
+// for NULL or anything else.
 IndentLanguage indent_language(const char* filetype_name);
+
+// Whether closing brackets move under their opener in `language`.
+bool indent_has_brackets(IndentLanguage language);
 
 // The number of spaces and tabs `text` starts with.
 int indent_leading(const char* text, int length);
@@ -58,6 +64,12 @@ bool indent_starts_with_closer(const char* text, int length);
 const BufferRow* indent_find_opener(IndentLanguage language,
                                     const BufferRow* row,
                                     int column);
+
+// What the file starting at `first` is indented with: *tabs when most of
+// its indented lines (first 500) start with a tab, else *step (1-8) spaces,
+// the most common increase between a line and the next one indented deeper.
+// False, leaving both alone, when no line says.
+bool indent_detect(const BufferRow* first, bool* tabs, int* step);
 
 // One level of indentation for the file starting at `first` into `out`
 // (NUL-terminated, at most size - 1 characters): a tab when the file is

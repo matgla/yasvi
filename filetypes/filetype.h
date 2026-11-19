@@ -62,6 +62,9 @@ typedef struct Filetype {
   // Whole file names (no directory) for files without an extension, such
   // as "fstab"; NULL-terminated, may be NULL.
   const char** filenames;
+  // Keeps tab characters (Makefiles): Tab inserts a tab and one indent step
+  // is a tab, whatever the file's other lines are indented with.
+  bool hard_tabs;
 } Filetype;
 
 // Lookup functions. filetype_by_extension also matches whole file names
@@ -79,6 +82,7 @@ extern const Filetype g_filetype_shell;
 extern const Filetype g_filetype_zig;
 extern const Filetype g_filetype_pio;
 extern const Filetype g_filetype_conf;
+extern const Filetype g_filetype_make;
 
 // Registry of all built-in filetypes
 extern const Filetype* g_filetypes[];

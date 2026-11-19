@@ -26,15 +26,17 @@ static const char* conf_extensions[] = {".conf", ".cfg", ".ini", ".toml", ".yasv
 static const char* conf_filenames[] = {"fstab", "inittab", NULL};
 
 // yasvi's settings (config.c, make.c): `set` lines in vi.conf and .yasvirc.
-static const char* vi_settings[] = {"record", "autoindent", "ai", "makeprg", "makemode",
-                                    NULL};
+static const char* vi_settings[] = {"record",     "autoindent", "ai", "tabstop",
+                                    "ts",         "expandtab",  "et", "shiftwidth",
+                                    "sw",         "makeprg",    "makemode", NULL};
 // Values that are words with a meaning of their own.
 static const char* conf_values[] = {"on",  "off",  "yes",  "no",   "true",
                                     "false", "wait", "exec", NULL};
 
 static const char* conf_words[] = {"set", "record", "norecord", "autoindent",
-                                   "noautoindent", "makeprg", "makemode", "on",
-                                   "off", "wait", "exec", NULL};
+                                   "noautoindent", "tabstop", "expandtab",
+                                   "noexpandtab", "shiftwidth", "makeprg", "makemode",
+                                   "on", "off", "wait", "exec", NULL};
 static const char** completion_words[] = {conf_words, NULL};
 
 static bool conf_is_one_of(const char** words, const char* text, int length) {

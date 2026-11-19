@@ -25,6 +25,14 @@
 // Forward declaration
 struct Filetype;
 
+// How this file is indented when :set said so for it (editor.c); Default
+// follows the filetype, the file's own indentation, then the settings.
+typedef enum {
+  BufferIndent_Default = 0,
+  BufferIndent_Tabs,
+  BufferIndent_Spaces,
+} BufferIndent;
+
 typedef struct Buffer {
   BufferRow* head;
   BufferRow* tail;
@@ -45,6 +53,8 @@ typedef struct Buffer {
   char* autosave_path;   // this session's autosave file, NULL until written
   char* stale_autosave;  // left by a crash, until :recover or :delautosave
   bool autosave_disabled;  // :help and other buffers that are not files
+  BufferIndent indent;     // :set expandtab / noexpandtab in this file
+  int shiftwidth;          // :set shiftwidth in this file, 0 while not set
 } Buffer;
 
 Buffer* buffer_alloc();

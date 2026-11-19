@@ -20,6 +20,8 @@
 #include <ctype.h>
 #include <string.h>
 
+#include "filetypes/makefile.h"
+
 // How far up indent_find_opener and indent_unit look.
 #define INDENT_SEARCH_ROWS 2000
 #define INDENT_UNIT_ROWS 500
@@ -35,7 +37,14 @@ IndentLanguage indent_language(const char* filetype_name) {
   if (strcmp(filetype_name, "shell") == 0) {
     return IndentLanguage_Shell;
   }
+  if (strcmp(filetype_name, "make") == 0) {
+    return IndentLanguage_Make;
+  }
   return IndentLanguage_None;
+}
+
+bool indent_has_brackets(IndentLanguage language) {
+  return language == IndentLanguage_Brackets || language == IndentLanguage_Shell;
 }
 
 int indent_leading(const char* text, int length) {
@@ -126,6 +135,9 @@ bool indent_opens_block(IndentLanguage language, const char* text, int length) {
   if (language == IndentLanguage_None) {
     return false;
   }
+  if (language == IndentLanguage_Make) {
+    return makefile_is_rule(text, length);
+  }
   int end = indent_scan(language, text, length, NULL, NULL);
   while (end > 0 && isspace((unsigned char)text[end - 1])) {
     --end;
@@ -194,7 +206,7 @@ const BufferRow* indent_find_opener(IndentLanguage language,
   return NULL;
 }
 
-int indent_unit(const BufferRow* first, int tab_size, char* out, int size) {
+bool indent_detect(const BufferRow* first, bool* tabs_out, int* step_out) {
   // How often each step from 1 to 8 spaces appears between a line and the
   // next one indented deeper.
   int steps[9] = {0};
@@ -223,13 +235,28 @@ int indent_unit(const BufferRow* first, int tab_size, char* out, int size) {
       best = step;
     }
   }
-  int length = 0;
   if (tabs > steps[best]) {
+    *tabs_out = true;
+    return true;
+  }
+  if (best > 0) {
+    *tabs_out = false;
+    *step_out = best;
+    return true;
+  }
+  return false;
+}
+
+int indent_unit(const BufferRow* first, int tab_size, char* out, int size) {
+  bool tabs = false;
+  int spaces = tab_size > 0 ? tab_size : 4;
+  indent_detect(first, &tabs, &spaces);
+  int length = 0;
+  if (tabs) {
     if (size > 1) {
       out[length++] = '\t';
     }
   } else {
-    const int spaces = best > 0 ? best : (tab_size > 0 ? tab_size : 4);
     while (length < spaces && length < size - 1) {
       out[length++] = ' ';
     }

@@ -13,7 +13,8 @@ endif
 SUT_SRCS = ../autosave.c ../buffer.c ../config.c ../fileops.c ../indent.c ../record.c ../termpanel.c ../buffer_row.c ../command.c ../completion.c ../help.c ../search.c ../tags.c \
            ../make.c ../man.c ../run.c \
            ../filetypes/filetype.c ../filetypes/c.c ../filetypes/shell.c \
-           ../filetypes/zig.c ../filetypes/pio.c ../filetypes/conf.c
+           ../filetypes/zig.c ../filetypes/pio.c ../filetypes/conf.c \
+           ../filetypes/makefile.c
 
 # File manager sources (need ncurses)
 FM_SRCS = ../file_manager.c
@@ -34,6 +35,7 @@ TEST_NAMES = buffer_tests command_tests \
              zig_highlight_tests \
              pio_highlight_tests \
              conf_highlight_tests \
+             make_highlight_tests \
              completion_tests \
              buffer_lifecycle_tests \
              buffer_row_management_tests \
@@ -96,6 +98,9 @@ build/pio_highlight_tests: pio_highlight_tests.c $(SUT_SRCS) acutest.h | build
 
 build/conf_highlight_tests: conf_highlight_tests.c $(SUT_SRCS) acutest.h | build
 	$(CC) $(CFLAGS) -o $@ conf_highlight_tests.c $(SUT_SRCS) $(LDFLAGS)
+
+build/make_highlight_tests: make_highlight_tests.c $(SUT_SRCS) acutest.h | build
+	$(CC) $(CFLAGS) -o $@ make_highlight_tests.c $(SUT_SRCS) $(LDFLAGS)
 
 build/completion_tests: completion_tests.c $(SUT_SRCS) acutest.h | build
 	$(CC) $(CFLAGS) -o $@ completion_tests.c $(SUT_SRCS) $(LDFLAGS)

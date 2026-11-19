@@ -50,7 +50,7 @@ void test_conf_detected(void) {
   TEST_CHECK(filetype_by_extension("fstab.c") == &g_filetype_c);
   TEST_CHECK(filetype_by_extension("my.fstab") == NULL);
   // the extension is taken from the name, not from a directory
-  TEST_CHECK(filetype_by_extension("build.d/Makefile") == NULL);
+  TEST_CHECK(filetype_by_extension("build.d/README") == NULL);
 }
 
 void test_conf_comment_and_section(void) {
@@ -88,6 +88,16 @@ void test_conf_vi_settings(void) {
   check_range(buffer->current_row, 0, 6, EHighlightToken_Keyword);
   check_range(buffer->current_row, 6, 7, EHighlightToken_Symbol);
   check_range(buffer->current_row, 7, 9, EHighlightToken_Digit);
+  buffer_free(buffer);
+
+  // set tabstop=4, noet
+  buffer = conf_buffer("set tabstop=4");
+  check_range(buffer->current_row, 4, 11, EHighlightToken_Keyword);
+  check_range(buffer->current_row, 12, 13, EHighlightToken_Digit);
+  buffer_free(buffer);
+  buffer = conf_buffer("noet");
+  check_range(buffer->current_row, 0, 2, EHighlightToken_Digit);
+  check_range(buffer->current_row, 2, 4, EHighlightToken_Keyword);
   buffer_free(buffer);
 
   // a misspelt setting is not a keyword

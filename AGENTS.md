@@ -48,7 +48,8 @@ The project is licensed under GNU General Public License v3.0 (GPL-3.0).
 │   ├── shell.c/h       # Shell highlighter
 │   ├── zig.c/h         # Zig highlighter (.zig, .zon)
 │   ├── pio.c/h         # RP2040/RP2350 PIO assembly highlighter (.pio)
-│   └── conf.c/h        # config files: vi.conf, .yasvirc, .conf/.ini, fstab
+│   ├── conf.c/h        # config files: vi.conf, .yasvirc, .conf/.ini, fstab
+│   └── makefile.c/h    # Makefile, *.mk: highlighting, rule lines, hard tabs
 ├── tests/              # Unit tests
 │   ├── acutest.h       # Single-header test framework
 │   ├── buffer_tests.c  # Buffer and buffer_row tests
@@ -160,7 +161,10 @@ cd tests && make run
   and navigation, `:e`/`:open`, the tree's a/A/r/c/d keys, Tab completion
 - `indent_tests.c`: block openers, bracket matching, the indent step, and
   Enter/o/O/closing brackets/Tab/Backspace through the editor, Backspace
-  joining lines
+  joining lines; Makefiles' hard tabs and how a tab is drawn; `:set ts`,
+  `et`/`noet`/`et!`, `sw` per buffer and the status bar text
+- `make_highlight_tests.c`: the make filetype (detection, highlighting,
+  continuations, define bodies, `makefile_is_rule`)
 - `termpanel_tests.c`: output cleaning, scrollback, history, a real shell,
   Ctrl-C, and the panel's keys through the editor
 
@@ -216,7 +220,8 @@ clang-format -i editor.c
 - Navigation: `h`, `j`, `k`, `l`, `w`, `b`, `0`, `$`, `gg`, `G`
 - Editing: `i`, `a`, `o`, `O`, `x`, `dd`, `dw`
 - Commands: `:w`, `:q`, `:wq`, `:recover`, `:delautosave`, `:man`, `:make`,
-  `:set` (`record`, `autoindent`/`ai`, `makeprg`, `makemode`), `:cn`, `:cp`, `:cc`, `:cl`,
+  `:set` (`record`, `autoindent`/`ai`, `tabstop`/`ts`, `expandtab`/`et`,
+  `shiftwidth`/`sw`, `makeprg`, `makemode`), `:cn`, `:cp`, `:cc`, `:cl`,
   `:!cmd`, `:r !cmd`, `:r FILE`, `:term [cmd]`, `:termclose`, `:e`/`:open FILE`, `:e!`; `K` opens a
   man page. `:q` in `:help`, a
   `:man` page or the `:cl` log (`autosave_disabled` buffers) closes that
@@ -362,11 +367,32 @@ within 80 columns, and a centred toolbar widget wider than the screen now
 starts at column 0 and is cut instead of vanishing). Lines are `key=value` or
 `set key=value`, `#` comments; a boolean also takes `key`, `nokey` and `key?`
 (on/off/yes/no/true/false/1/0 as values). A new boolean is one row in
-`g_config_bools` plus its field. `:set` alone shows all
-(`norecord autoindent makeprg=... makemode=...`); `:set record` shows just
-`record` (`config_describe_setting`). A boolean may have a short name
-(`ai`). `config_init` (from `main.c`) sets the defaults; tests that zero the
-`Editor` get every boolean off, so autoindent stays out of the older tests.
+`g_config_bools` plus its field (`inverted` when the default is on but a
+zeroed `Editor` must get it: `expandtab` is the field `noexpandtab`); a
+number is a row in `g_config_ints` (`tabstop` 1-32, `shiftwidth` 0-32, an
+`unsigned char` each: test files keep copies of the `Editor` struct, and
+`EditorConfig` must stay within 8 bytes for their layout). `key!` turns a
+boolean over; a bad value gets `config_expected_value` ("tabstop is a
+number from 1 to 32"). `:set` alone shows all (`norecord autoindent
+expandtab tabstop=8 shiftwidth=0 makeprg=... makemode=...`); `:set record`
+shows just `record` (`config_describe_setting`). A boolean may have a short
+name (`ai`). `config_init` (from `main.c`) sets the defaults; tests that
+zero the `Editor` get every boolean off, so autoindent stays out of the
+older tests, and a tabstop of 0 means 8.
+
+Tabs and spaces (`editor_uses_tabs`, `editor_shift_width`): a buffer is in
+tab mode (Tab inserts `\t`, autoindent's step is `\t`) when `:set noet`
+said so for it (`Buffer.indent`), else when its filetype has `hard_tabs`
+(make), else when `indent_detect` finds most indented lines start with a
+tab, else when vi.conf said `noexpandtab`. In space mode the step is the
+buffer's `:set sw` (`Buffer.shiftwidth`), else the file's detected step,
+else vi.conf's `shiftwidth`, else `tab_size`. `:set et`/`noet`/`et!`/`sw` in
+a session go to the current buffer (`editor_set_option` sets them from what
+the buffer uses now, so `et!` flips the effective mode, then puts the
+defaults back); from vi.conf or .yasvirc (read before any buffer exists)
+they are the defaults. `:set ts` is global and redraws the screen. The
+toolbar's `indent` widget (right side, left of the position) shows
+`editor_describe_indent`: `tabs:<tabstop>` or `spaces:<shiftwidth>`.
 
 ### Automatic Indentation (`autoindent`, default on)
 
@@ -379,12 +405,18 @@ opener, strips the moved text's leading and the old line's trailing white
 space, puts a moved closing bracket under its opener, and splits `{|}` into
 three lines. A `}` `)` `]` typed as the first thing on a line moves under its
 opener (`indent_find_opener`: brackets outside strings, char literals and
-line comments, 2000 lines up; block comments are not skipped). The step is
-`indent_unit`: a tab if most indented lines start with one, else the most
-common increase between lines (first 500), else `tab_size` spaces. Tab and
+line comments, 2000 lines up; block comments are not skipped). The step is a
+tab in tab mode, else `editor_shift_width` spaces (see Tabs and spaces under
+Settings File; `indent_detect` reads the file: a tab if most indented lines
+start with one, else the most common increase between lines, first 500). Tab and
 Backspace in an all-space indentation go to the next/previous step. A line
 that only holds Enter's indentation (`g_autoindent_row`) becomes empty on
-Esc or another Enter. `O` (`editor_open_line_above`) copies the line's
+Esc or another Enter. A filetype with `hard_tabs` (make) always steps by a
+tab (`editor_indent_unit`), Tab inserts one tab character there instead of
+spaces, and its `IndentLanguage_Make` opens a block after a rule line
+(`makefile_is_rule`: `target: deps`, not an assignment, a target-specific
+variable, a directive or a recipe); it has no brackets
+(`indent_has_brackets`), so a `)` in a recipe stays put. `O` (`editor_open_line_above`) copies the line's
 indentation, a step more above a closing bracket. Backspace at column 0
 joins with the line above; `buffer_join_current_line_with_previous` leaves
 the joined line current (it used to leave the one below, which the screen
@@ -636,6 +668,31 @@ the value: numbers and on/off/yes/no/true/false/wait/exec as literals,
 quoted strings, `$VAR`, and `%` (`:make`'s current file). A `#` later in a
 line is part of the value, as config.c reads it. Test:
 `tests/conf_highlight_tests.c`.
+
+Makefiles (`filetypes/makefile.c`, filetype `make`: `Makefile`, `makefile`,
+`GNUmakefile`, `Makefile.in`/`.am` by name, `.mk` `.mak`) highlight
+directives (`include`, `ifeq`, `define`, `export`...; `else ifeq` and
+`export X = 1` go on to the statement after them, `export = 1` sets a
+variable), an assignment's variable as a type and its `= := ::= :::= ?= +=
+!=` as a symbol, a rule's targets as Keyword2 (special ones like `.PHONY` as
+keywords, `%` as Symbol2), `:`/`::` and `|`, `$(VAR)` `${VAR}` `$@` `$<`
+references (Preprocessor) and `$(func args)` calls with the function as a
+keyword, `#` comments. A line starting with a tab is a recipe: `@ - +`
+prefixes as symbols, the rest through the shell highlighter, references on
+top; `target: deps ; cmd` the same after the `;`. `lang_state` carries a
+backslash-continued value, recipe (with the shell's open quote) or comment,
+and `define ... endef` (nesting depth) to the next row. Tests:
+`tests/make_highlight_tests.c`.
+
+Tab characters are drawn as spaces to the next multiple of `tabstop`
+(`editor_tab_stop`, default 8), counted from the start of the line, by
+`editor_decorate_and_draw_line`. The cursor stays a character index
+(`cursor.x`, `start_column`); `editor_restore_cursor_position` turns it into
+the screen column on a line with tabs (every `move` to the text cursor goes
+through it). Horizontal scrolling still counts characters, so on a long
+line with tabs the cursor can reach the window's edge (it is clamped there)
+before the view scrolls. Before this a tab went to the terminal as a raw
+`\t` and the screen went out of step with the cursor.
 
 ## Development Notes
 

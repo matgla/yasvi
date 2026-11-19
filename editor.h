@@ -95,6 +95,16 @@ void editor_deinit(Editor* editor);
 void editor_load_file(Editor* editor, const char* filename);
 void editor_create_new_file(Editor* editor);
 int editor_get_cursor_x(const Editor* editor);
+
+// Indentation of the current buffer: whether Tab and autoindent insert tab
+// characters (its :set expandtab, else a filetype that keeps tabs such as
+// make, else the file's own indentation, else the expandtab setting), the
+// spaces per step otherwise (its :set shiftwidth, else the file's step,
+// else the shiftwidth setting, else tab_size), and both for the status bar
+// as "tabs:4" (the tabstop) or "spaces:2".
+bool editor_uses_tabs(const Editor* editor);
+int editor_shift_width(const Editor* editor);
+void editor_describe_indent(const Editor* editor, char* out, size_t size);
 void editor_toggle_file_manager(Editor* editor);
 void editor_file_manager_select(Editor* editor);
 

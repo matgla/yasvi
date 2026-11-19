@@ -109,6 +109,8 @@ Buffer* buffer_alloc() {
     buffer->autosave_path = NULL;
     buffer->stale_autosave = NULL;
     buffer->autosave_disabled = false;
+    buffer->indent = BufferIndent_Default;
+    buffer->shiftwidth = 0;
   }
   return buffer;
 }

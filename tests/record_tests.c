@@ -159,10 +159,10 @@ void test_config_describe(void) {
   config_init(&config);
   char out[64];
   config_describe(&config, out, sizeof(out));
-  check_string(out, "norecord autoindent");
+  check_string(out, "norecord autoindent expandtab tabstop=8 shiftwidth=0");
   config.record = true;
   config_describe(&config, out, sizeof(out));
-  check_string(out, "record autoindent");
+  check_string(out, "record autoindent expandtab tabstop=8 shiftwidth=0");
   // :set shows only the setting it names; ai is autoindent
   TEST_CHECK(config_set(&config, "noai") == ConfigSet_Ok);
   TEST_CHECK(!config.autoindent);
@@ -172,6 +172,57 @@ void test_config_describe(void) {
   check_string(out, "record");
   TEST_CHECK(config_set(&config, "set autoindent=on") == ConfigSet_Ok);
   TEST_CHECK(config.autoindent);
+}
+
+// tabstop, expandtab and shiftwidth: numbers in range, vim's short names,
+// "key!" turning a boolean over, and what a bad value is told.
+void test_config_tab_settings(void) {
+  EditorConfig config;
+  config_init(&config);
+  char out[64];
+  TEST_CHECK(config_set(&config, "set tabstop=4") == ConfigSet_Ok);
+  TEST_CHECK(config.tabstop == 4);
+  TEST_CHECK(config_set(&config, "ts = 2") == ConfigSet_Ok);
+  TEST_CHECK(config.tabstop == 2);
+  TEST_CHECK(config_set(&config, "ts=0") == ConfigSet_BadValue);
+  TEST_CHECK(config_set(&config, "ts=33") == ConfigSet_BadValue);
+  TEST_CHECK(config_set(&config, "ts=4x") == ConfigSet_BadValue);
+  TEST_CHECK(config_set(&config, "nots") == ConfigSet_UnknownKey);
+  TEST_CHECK(config_set(&config, "ts") == ConfigSet_Query);
+  TEST_CHECK(config_set(&config, "ts?") == ConfigSet_Query);
+  TEST_CHECK(config.tabstop == 2);
+  config_describe_setting(&config, "ts", out, sizeof(out));
+  check_string(out, "tabstop=2");
+  config_expected_value("ts=0", out, sizeof(out));
+  check_string(out, "tabstop is a number from 1 to 32");
+  config_expected_value("et=maybe", out, sizeof(out));
+  check_string(out, "expandtab is on or off");
+
+  TEST_CHECK(!config.noexpandtab);  // expandtab by default
+  TEST_CHECK(config_set(&config, "noet") == ConfigSet_Ok);
+  TEST_CHECK(config.noexpandtab);
+  config_describe_setting(&config, "et?", out, sizeof(out));
+  check_string(out, "noexpandtab");
+  TEST_CHECK(config_set(&config, "et!") == ConfigSet_Ok);
+  TEST_CHECK(!config.noexpandtab);
+  TEST_CHECK(config_set(&config, "expandtab=off") == ConfigSet_Ok);
+  TEST_CHECK(config.noexpandtab);
+  TEST_CHECK(config_set(&config, "noet!") == ConfigSet_UnknownKey);
+
+  TEST_CHECK(config_set(&config, "sw=0") == ConfigSet_Ok);
+  TEST_CHECK(config_set(&config, "shiftwidth=3") == ConfigSet_Ok);
+  TEST_CHECK(config.shiftwidth == 3);
+  TEST_CHECK(config_setting_of("set sw=3") == ConfigSetting_Shiftwidth);
+  TEST_CHECK(config_setting_of("noet") == ConfigSetting_Expandtab);
+  TEST_CHECK(config_setting_of("et!") == ConfigSetting_Expandtab);
+  TEST_CHECK(config_setting_of("tabstop=8") == ConfigSetting_Tabstop);
+  TEST_CHECK(config_setting_of("noai") == ConfigSetting_Other);
+  TEST_CHECK(config_setting_of("makeprg=make") == ConfigSetting_Unknown);
+
+  // a zeroed config, as the tests' editors have it, shows the default stop
+  memset(&config, 0, sizeof(config));
+  config_describe_setting(&config, "ts?", out, sizeof(out));
+  check_string(out, "tabstop=8");
 }
 
 void test_config_user_path(void) {
@@ -493,6 +544,7 @@ void test_editor_records_terminal(void) {
 TEST_LIST = {
   {"config_set_record", test_config_set_record},
   {"config_describe", test_config_describe},
+  {"config_tab_settings", test_config_tab_settings},
   {"config_user_path", test_config_user_path},
   {"config_read_lines", test_config_read_lines},
   {"record_wanted_and_path", test_record_wanted_and_path},

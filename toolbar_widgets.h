@@ -23,6 +23,7 @@
 Widget* widget_mode_create(void);
 Widget* widget_filename_create(void);
 Widget* widget_position_create(void);
+Widget* widget_indent_create(void);  // "tabs:4" / "spaces:2"
 Widget* widget_command_create(void);
 Widget* widget_message_create(void);
 Widget* widget_keyseq_create(void);

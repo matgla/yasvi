@@ -276,6 +276,73 @@ Widget* widget_filename_create(void) {
 }
 
 // ============================================================================
+// Indent Widget: "tabs:4" (the tabstop) or "spaces:2" (the shiftwidth)
+// ============================================================================
+
+typedef struct {
+  char text[16];
+} IndentWidgetData;
+
+static bool indent_init(Widget* widget, struct Toolbar* toolbar) {
+  (void)toolbar;
+  ((IndentWidgetData*)widget->data)->text[0] = '\0';
+  return true;
+}
+
+static void indent_deinit(Widget* widget) {
+  free(widget->data);
+}
+
+static WidgetUpdateResult indent_update(Widget* widget, struct Toolbar* toolbar,
+                                        void* editor_ctx) {
+  (void)toolbar;
+  IndentWidgetData* data = (IndentWidgetData*)widget->data;
+  char text[sizeof(data->text)] = "";
+  const Editor* editor = (const Editor*)editor_ctx;
+  if (editor->current_buffer != NULL) {
+    editor_describe_indent(editor, text, sizeof(text));
+  }
+  if (strcmp(text, data->text) == 0) {
+    return WidgetUpdate_NoChange;
+  }
+  memcpy(data->text, text, sizeof(text));
+  return WidgetUpdate_Redraw;
+}
+
+static int indent_draw(const Widget* widget, struct Toolbar* toolbar, int x, int y,
+                       int max_width) {
+  (void)toolbar;
+  const IndentWidgetData* data = (const IndentWidgetData*)widget->data;
+  int len = (int)strlen(data->text);
+  if (len > max_width) len = max_width;
+  attrset(COLOR_OTHER);
+  mvaddnstr(y, x, data->text, len);
+  return len;
+}
+
+static int indent_get_min_width(const Widget* widget) {
+  return (int)strlen(((const IndentWidgetData*)widget->data)->text);
+}
+
+static const WidgetVTable indent_vtable = {
+    .init = indent_init,
+    .deinit = indent_deinit,
+    .update = indent_update,
+    .draw = indent_draw,
+    .get_min_width = indent_get_min_width,
+    .handle_key = NULL,
+};
+
+Widget* widget_indent_create(void) {
+  IndentWidgetData* data = malloc(sizeof(IndentWidgetData));
+  if (!data) return NULL;
+
+  // priority 0: left of the position on the right side
+  return widget_create("indent", WidgetPosition_Right, 0, WidgetVisibility_Always,
+                       &indent_vtable, data);
+}
+
+// ============================================================================
 // Position Widget
 // ============================================================================
 

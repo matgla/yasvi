@@ -308,6 +308,122 @@ void test_noautoindent_and_plain_text(void) {
   remove_temp_dir();
 }
 
+// Makefiles keep hard tabs: Tab inserts a tab even in a file indented with
+// spaces, Enter after a rule line starts its recipe with a tab, and a recipe
+// line keeps it; a tab is drawn to the next multiple of 8 and the cursor goes
+// after it.
+void test_makefile_inserts_tabs(void) {
+  make_temp_dir();
+  Editor editor;
+  open_file(&editor, "Makefile", "X = 1\nifdef A\n  Y = 2\nendif\n");
+  TEST_CHECK(indent_language("make") == IndentLanguage_Make);
+  keys(&editor, "Go\tcc\033");
+  check_string(text_of(&editor), "X = 1\nifdef A\n  Y = 2\nendif\n\tcc");
+  // Backspace takes the whole tab; Enter after a rule line gives a tab, a
+  // recipe line keeps it
+  keys(&editor, "o\177all: x\nmkdir -p y\nrm z\033");
+  check_string(text_of(&editor),
+               "X = 1\nifdef A\n  Y = 2\nendif\n\tcc\nall: x\n\tmkdir -p y\n\trm z");
+  keys(&editor, "^i\177\033");
+  check_string(text_of(&editor),
+               "X = 1\nifdef A\n  Y = 2\nendif\n\tcc\nall: x\n\tmkdir -p y\nrm z");
+  // after an assignment Enter adds nothing
+  keys(&editor, "gg$a\nZ = 3\033");
+  check_string(text_of(&editor),
+               "X = 1\nZ = 3\nifdef A\n  Y = 2\nendif\n\tcc\nall: x\n\tmkdir -p y\nrm z");
+  // a ) typed in a recipe stays where it is
+  keys(&editor, "Gddo)\033");
+  check_string(text_of(&editor),
+               "X = 1\nZ = 3\nifdef A\n  Y = 2\nendif\n\tcc\nall: x\n\tmkdir -p y\n\t)");
+
+  // drawn: the tab as spaces to column 8, the cursor after it on "m"
+  keys(&editor, "k^");
+  TEST_CHECK(editor_get_cursor_x(&editor) == 1);
+  mock_ncurses_reset();
+  for (BufferRow* row = buffer_get_first_row(editor.current_buffer); row != NULL;
+       row = row->next) {
+    row->dirty = true;
+  }
+  editor_redraw_screen(&editor);
+  TEST_CHECK(strstr(mock_ncurses_get_added(), "        mkdir -p y") != NULL);
+  TEST_MSG("drawn: \"%s\"", mock_ncurses_get_added());
+  TEST_CHECK(mock_ncurses_get_last_x() == editor.number_of_line_digits + 8);
+  TEST_MSG("cursor at %d", mock_ncurses_get_last_x());
+  editor_deinit(&editor);
+
+  // C files still get spaces
+  open_file(&editor, "a.c", "x\n");
+  keys(&editor, "o\ty\033");
+  check_string(text_of(&editor), "x\n  y");
+  editor_deinit(&editor);
+  remove_temp_dir();
+}
+
+// :set tabstop redraws tabs that wide; :set expandtab / noexpandtab / et!
+// and :set shiftwidth change the current file only; a file indented with
+// tabs gets tab mode by itself; the status bar text follows.
+void test_set_tabstop_expandtab_shiftwidth(void) {
+  make_temp_dir();
+  Editor editor;
+  char text[32];
+  open_file(&editor, "Makefile", "all:\n\tcc x\n");
+  editor_describe_indent(&editor, text, sizeof(text));
+  check_string(text, "tabs:8");
+  keys(&editor, "j^");
+  mock_ncurses_reset();
+  keys(&editor, ":set ts=4\n");  // redraws every row, tabs 4 wide
+  TEST_CHECK(strstr(mock_ncurses_get_added(), "    cc x") != NULL);
+  TEST_CHECK(strstr(mock_ncurses_get_added(), "     cc x") == NULL);
+  TEST_MSG("drawn: \"%s\"", mock_ncurses_get_added());
+  editor_redraw_screen(&editor);
+  TEST_CHECK(mock_ncurses_get_last_x() == editor.number_of_line_digits + 4);
+  TEST_MSG("cursor at %d", mock_ncurses_get_last_x());
+  editor_describe_indent(&editor, text, sizeof(text));
+  check_string(text, "tabs:4");
+  keys(&editor, ":set ts=0\n");  // refused, the value stays
+  TEST_CHECK(editor.config.tabstop == 4);
+
+  // spaces in this Makefile, then back; et! turns it over
+  keys(&editor, ":set et\n");
+  editor_describe_indent(&editor, text, sizeof(text));
+  check_string(text, "spaces:2");  // tab_size: the file says nothing of spaces
+  keys(&editor, "o\177\tz\033");
+  check_string(text_of(&editor), "all:\n\tcc x\n  z");
+  keys(&editor, ":set et!\n");
+  TEST_CHECK(editor_uses_tabs(&editor));
+  keys(&editor, "o\177\177\tw\033");
+  check_string(text_of(&editor), "all:\n\tcc x\n  z\n\tw");
+  TEST_CHECK(!editor.config.noexpandtab);  // the default is not touched
+  editor_deinit(&editor);
+
+  // a C file indented with tabs is in tab mode; :set sw works on spaces
+  open_file(&editor, "t.c", "int f() {\n\treturn 0;\n}\n");
+  TEST_CHECK(editor_uses_tabs(&editor));
+  keys(&editor, "Go\tx\033");
+  check_string(text_of(&editor), "int f() {\n\treturn 0;\n}\n\tx");
+  keys(&editor, ":set noet\n:set sw=3\n:set et\n");
+  editor_describe_indent(&editor, text, sizeof(text));
+  check_string(text, "spaces:3");
+  keys(&editor, "o\177\ty\033");
+  check_string(text_of(&editor), "int f() {\n\treturn 0;\n}\n\tx\n   y");
+  keys(&editor, ":set sw?\n");
+  TEST_CHECK(editor.error_message != NULL &&
+             strstr(editor.error_message, "shiftwidth=3") != NULL);
+  TEST_CHECK(editor.config.shiftwidth == 0);
+  editor_deinit(&editor);
+
+  // the defaults from vi.conf: noexpandtab for files that do not say
+  open_file(&editor, "notes.txt", "plain\n");
+  editor.config.noexpandtab = true;
+  editor.config.shiftwidth = 4;
+  TEST_CHECK(editor_uses_tabs(&editor));
+  editor.config.noexpandtab = false;
+  editor_describe_indent(&editor, text, sizeof(text));
+  check_string(text, "spaces:4");
+  editor_deinit(&editor);
+  remove_temp_dir();
+}
+
 // Ctrl-H is Backspace in insert mode and on the command line, as in vim
 // (outside them it moves to the file tree).
 void test_ctrl_h_is_backspace_when_typing(void) {
@@ -328,6 +444,8 @@ void test_ctrl_h_is_backspace_when_typing(void) {
 
 TEST_LIST = {
   {"ctrl_h_is_backspace_when_typing", test_ctrl_h_is_backspace_when_typing},
+  {"makefile_inserts_tabs", test_makefile_inserts_tabs},
+  {"set_tabstop_expandtab_shiftwidth", test_set_tabstop_expandtab_shiftwidth},
   {"indent_rules", test_indent_rules},
   {"indent_find_opener_and_unit", test_indent_find_opener_and_unit},
   {"enter_keeps_and_adds_indentation", test_enter_keeps_and_adds_indentation},

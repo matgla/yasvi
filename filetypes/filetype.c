@@ -24,6 +24,7 @@
 // Include built-in filetype definitions
 #include "c.h"
 #include "conf.h"
+#include "makefile.h"
 #include "shell.h"
 #include "pio.h"
 #include "zig.h"
@@ -35,6 +36,7 @@ const Filetype* g_filetypes[] = {
   &g_filetype_zig,
   &g_filetype_pio,
   &g_filetype_conf,
+  &g_filetype_make,
 };
 
 const size_t g_num_filetypes = sizeof(g_filetypes) / sizeof(g_filetypes[0]);
