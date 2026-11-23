@@ -44,7 +44,8 @@ The project is licensed under GNU General Public License v3.0 (GPL-3.0).
 ├── highlight.h         # Syntax highlighting token types enum
 ├── filetypes/          # File type specific configurations
 │   ├── filetype.c/h    # File type registry and detection (name, extension, shebang)
-│   ├── c.c/h           # C highlighter (default when no filetype matches)
+│   ├── c.c/h           # C highlighter (default when no filetype matches); the
+│   │                   # yasc dialect's words where tcc takes them as keywords
 │   ├── shell.c/h       # Shell highlighter
 │   ├── zig.c/h         # Zig highlighter (.zig, .zon)
 │   ├── pio.c/h         # RP2040/RP2350 PIO assembly highlighter (.pio)

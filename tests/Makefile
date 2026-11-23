@@ -36,6 +36,7 @@ TEST_NAMES = buffer_tests command_tests \
              pio_highlight_tests \
              conf_highlight_tests \
              make_highlight_tests \
+             yasc_highlight_tests \
              completion_tests \
              buffer_lifecycle_tests \
              buffer_row_management_tests \
@@ -101,6 +102,9 @@ build/conf_highlight_tests: conf_highlight_tests.c $(SUT_SRCS) acutest.h | build
 
 build/make_highlight_tests: make_highlight_tests.c $(SUT_SRCS) acutest.h | build
 	$(CC) $(CFLAGS) -o $@ make_highlight_tests.c $(SUT_SRCS) $(LDFLAGS)
+
+build/yasc_highlight_tests: yasc_highlight_tests.c $(SUT_SRCS) acutest.h | build
+	$(CC) $(CFLAGS) -o $@ yasc_highlight_tests.c $(SUT_SRCS) $(LDFLAGS)
 
 build/completion_tests: completion_tests.c $(SUT_SRCS) acutest.h | build
 	$(CC) $(CFLAGS) -o $@ completion_tests.c $(SUT_SRCS) $(LDFLAGS)
