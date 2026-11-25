@@ -62,6 +62,9 @@ const char* fileops_remove(const char* path);  // directories with everything in
 // '/'). Hidden names only when the last part starts with '.'. Returns how
 // many (the array is NULL when none).
 int path_complete(const char* partial, char*** matches);
+// The same, with a relative `partial` taken from directory `base` (NULL: the
+// working directory); the matches still start with `partial` as typed.
+int path_complete_in(const char* base, const char* partial, char*** matches);
 void path_matches_free(char** matches, int count);
 
 // The longest text every match starts with (malloc'd).

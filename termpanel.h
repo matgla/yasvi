@@ -108,6 +108,20 @@ void termpanel_input_backspace(TermPanel* panel);
 void termpanel_input_clear(TermPanel* panel);
 void termpanel_history_step(TermPanel* panel, int step);  // -1 older, +1 newer
 
+// Tab: completes the word at the end of the typed line, as a shell would --
+// the first word of a command from the shell's builtins and the programs in
+// PATH, any other word (or one with a '/') as a file name from the shell's
+// working directory (termpanel_shell_cwd). One match replaces the word (with
+// a space after it, none after a directory's '/'); several are cut to what
+// they all start with, and when that adds nothing they are listed in the
+// scrollback, packed into lines of `width` columns. Names are written with
+// backslashes before blanks and shell characters. Returns how many matched.
+int termpanel_complete(TermPanel* panel, int width);
+
+// The shell's working directory (malloc'd) from the /proc/PID/cwd link (Linux,
+// and YasOS since 2026-11-24), NULL when unknown.
+char* termpanel_shell_cwd(const TermPanel* panel);
+
 // SIGINT to every process below the shell (the shell itself keeps
 // running), found through /proc/PID/status PPid lines. Returns how many were
 // signalled.

@@ -25,10 +25,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 
+#include "fileops.h"
 #include "run.h"
 
 void termpanel_init(TermPanel* panel) {
@@ -331,6 +333,280 @@ void termpanel_input_clear(TermPanel* panel) {
   panel->input_length = 0;
   panel->input[0] = '\0';
   panel->history_index = panel->history_count;
+}
+
+// ---------------------------------------------------------------------------
+// Tab completion
+// ---------------------------------------------------------------------------
+
+char* termpanel_shell_cwd(const TermPanel* panel) {
+  if (!termpanel_running(panel)) {
+    return NULL;
+  }
+  char path[64];
+  snprintf(path, sizeof(path), "/proc/%d/cwd", (int)panel->pid);
+  char target[512];
+  const ssize_t n = readlink(path, target, sizeof(target) - 1);
+  if (n <= 0) {
+    return NULL;
+  }
+  target[n] = '\0';
+  return strdup(target);
+}
+
+// The words the shell runs itself (toybox sh), offered with PATH's programs
+static const char* g_shell_builtins[] = {
+  "alias", "bg",    "cd",     "echo",  "eval",  "exec",   "exit",  "export",
+  "false", "fg",    "jobs",   "printf", "pwd",  "read",   "set",   "shift",
+  "source", "test", "trap",   "true",  "type",  "umask",  "unalias", "unset",
+  "wait",  NULL};
+
+// Characters a completed name gets a backslash before
+static bool termpanel_needs_escape(char c) {
+  return strchr(" \t'\"\\$&;|<>()*?`#!", c) != NULL;
+}
+
+static bool termpanel_separator(char c) {
+  return strchr(";|&<>(", c) != NULL;
+}
+
+// The word being typed at the end of the line: where it starts in the input,
+// its text without quotes and backslashes (into `word`), and whether it names
+// a command (first word of the line or after ; | & ( ).
+static size_t termpanel_last_word(const char* input, size_t length, char* word,
+                                  size_t word_size, bool* command) {
+  size_t start = 0;
+  size_t used = 0;
+  bool command_position = true;
+  bool in_word = false;
+  char quote = '\0';
+  for (size_t i = 0; i < length; ++i) {
+    const char c = input[i];
+    if (quote == '\0' && (c == ' ' || c == '\t' || termpanel_separator(c))) {
+      if (in_word) {
+        command_position = false;
+        in_word = false;
+      }
+      if (termpanel_separator(c)) {
+        command_position = c != '<' && c != '>';
+      }
+      start = i + 1;
+      used = 0;
+      continue;
+    }
+    if (!in_word) {
+      in_word = true;
+      start = i;
+      used = 0;
+    }
+    if (quote == '\0' && c == '\\' && i + 1 < length) {
+      ++i;
+      if (used + 1 < word_size) {
+        word[used++] = input[i];
+      }
+      continue;
+    }
+    if ((c == '\'' || c == '"') && (quote == '\0' || quote == c)) {
+      quote = quote == '\0' ? c : '\0';
+      continue;
+    }
+    if (used + 1 < word_size) {
+      word[used++] = c;
+    }
+  }
+  word[used] = '\0';
+  *command = command_position;
+  return start;
+}
+
+static int termpanel_compare(const void* a, const void* b) {
+  return strcmp(*(char* const*)a, *(char* const*)b);
+}
+
+static bool termpanel_add_match(char*** matches, int* count, int* capacity,
+                                const char* name) {
+  if (*count == *capacity) {
+    const int grown_capacity = *capacity == 0 ? 32 : *capacity * 2;
+    char** grown = realloc(*matches, sizeof(char*) * (size_t)grown_capacity);
+    if (grown == NULL) {
+      return false;
+    }
+    *matches = grown;
+    *capacity = grown_capacity;
+  }
+  char* copy = strdup(name);
+  if (copy == NULL) {
+    return false;
+  }
+  (*matches)[(*count)++] = copy;
+  return true;
+}
+
+// Programs in PATH and shell builtins that start with `prefix`, sorted,
+// without duplicates
+static int termpanel_command_matches(const char* prefix, char*** out) {
+  char** matches = NULL;
+  int count = 0;
+  int capacity = 0;
+  const size_t prefix_length = strlen(prefix);
+  for (const char** b = g_shell_builtins; *b != NULL; ++b) {
+    if (strncmp(*b, prefix, prefix_length) == 0) {
+      termpanel_add_match(&matches, &count, &capacity, *b);
+    }
+  }
+  const char* env_path = getenv("PATH");
+  char* path = strdup(env_path != NULL && env_path[0] != '\0' ? env_path : "/bin:/usr/bin");
+  for (char* dir = path != NULL ? strtok(path, ":") : NULL; dir != NULL;
+       dir = strtok(NULL, ":")) {
+    DIR* d = opendir(dir);
+    if (d == NULL) {
+      continue;
+    }
+    struct dirent* entry;
+    while ((entry = readdir(d)) != NULL) {
+      const char* name = entry->d_name;
+      if (name[0] == '.' || strncmp(name, prefix, prefix_length) != 0) {
+        continue;
+      }
+      char* full = path_join(dir, name);
+      struct stat st;
+      const bool program = full != NULL && stat(full, &st) == 0 && !S_ISDIR(st.st_mode);
+      free(full);
+      if (program) {
+        termpanel_add_match(&matches, &count, &capacity, name);
+      }
+    }
+    closedir(d);
+  }
+  free(path);
+  if (count > 1) {
+    qsort(matches, (size_t)count, sizeof(char*), termpanel_compare);
+    int unique = 1;
+    for (int i = 1; i < count; ++i) {
+      if (strcmp(matches[i], matches[unique - 1]) == 0) {
+        free(matches[i]);
+      } else {
+        matches[unique++] = matches[i];
+      }
+    }
+    count = unique;
+  }
+  *out = matches;
+  return count;
+}
+
+// Puts `text` (escaped) in place of the input from `start`, plus `suffix`.
+// False when the line would be too long.
+static bool termpanel_replace_word(TermPanel* panel, size_t start, const char* text,
+                                   const char* suffix) {
+  char line[TERMPANEL_INPUT_MAX + 1];
+  size_t used = start;
+  memcpy(line, panel->input, start);
+  for (const char* c = text; *c != '\0'; ++c) {
+    if (used + 2 > TERMPANEL_INPUT_MAX) {
+      return false;
+    }
+    if (termpanel_needs_escape(*c)) {
+      line[used++] = '\\';
+    }
+    line[used++] = *c;
+  }
+  const size_t suffix_length = strlen(suffix);
+  if (used + suffix_length > TERMPANEL_INPUT_MAX) {
+    return false;
+  }
+  memcpy(line + used, suffix, suffix_length);
+  used += suffix_length;
+  memcpy(panel->input, line, used);
+  panel->input[used] = '\0';
+  panel->input_length = used;
+  return true;
+}
+
+// The matches as scrollback lines of at most `width` columns: file names
+// without their directory part
+static void termpanel_list_matches(TermPanel* panel, char** matches, int count,
+                                   bool files, int width) {
+  enum { kListMax = 200 };
+  if (width < 20 || width > TERMPANEL_LINE_MAX) {
+    width = 80;
+  }
+  if (panel->partial_length > 0) {
+    termpanel_end_line(panel);
+  }
+  char line[TERMPANEL_LINE_MAX + 1];
+  size_t used = 0;
+  const int shown = count < kListMax ? count : kListMax;
+  for (int i = 0; i < shown; ++i) {
+    const char* name = matches[i];
+    if (files) {
+      const size_t length = strlen(name);
+      const char* slash = NULL;
+      for (size_t j = 0; j + 1 < length; ++j) {
+        if (name[j] == '/') {
+          slash = name + j;
+        }
+      }
+      if (slash != NULL) {
+        name = slash + 1;
+      }
+    }
+    const size_t length = strlen(name);
+    if (used > 0 && used + 2 + length > (size_t)width) {
+      termpanel_push_line(panel, line, used);
+      used = 0;
+    }
+    if (used > 0) {
+      line[used++] = ' ';
+      line[used++] = ' ';
+    }
+    const size_t n = length < (size_t)width ? length : (size_t)width;
+    memcpy(line + used, name, n);
+    used += n;
+  }
+  if (used > 0) {
+    termpanel_push_line(panel, line, used);
+  }
+  if (count > shown) {
+    const int n = snprintf(line, sizeof(line), "... %d more", count - shown);
+    termpanel_push_line(panel, line, (size_t)n);
+  }
+  panel->scroll = 0;
+}
+
+int termpanel_complete(TermPanel* panel, int width) {
+  char word[TERMPANEL_INPUT_MAX + 1];
+  bool command = false;
+  const size_t start = termpanel_last_word(panel->input, panel->input_length, word,
+                                           sizeof(word), &command);
+  char** matches = NULL;
+  int count;
+  const bool files = !command || strchr(word, '/') != NULL;
+  if (!files) {
+    if (word[0] == '\0') {
+      return 0;  // every program there is: not useful
+    }
+    count = termpanel_command_matches(word, &matches);
+  } else {
+    char* cwd = termpanel_shell_cwd(panel);
+    count = path_complete_in(cwd, word, &matches);
+    free(cwd);
+  }
+  if (count == 1) {
+    const size_t length = strlen(matches[0]);
+    const bool directory = files && length > 0 && matches[0][length - 1] == '/';
+    termpanel_replace_word(panel, start, matches[0], directory ? "" : " ");
+  } else if (count > 1) {
+    char* common = path_common_prefix(matches, count);
+    if (common != NULL && strlen(common) > strlen(word)) {
+      termpanel_replace_word(panel, start, common, "");
+    } else {
+      termpanel_list_matches(panel, matches, count, files, width);
+    }
+    free(common);
+  }
+  path_matches_free(matches, count);
+  return count;
 }
 
 void termpanel_history_step(TermPanel* panel, int step) {

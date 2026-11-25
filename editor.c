@@ -2161,8 +2161,13 @@ static void editor_terminal_close(Editor* editor) {
 }
 
 // :term [CMD] -- shows the panel (starting the shell) and focuses it; CMD,
-// with % for the current file, is sent to the shell.
+// with % for the current file, is sent to the shell. A bare :term with the
+// panel already open closes it (and its shell), so :term toggles.
 static CommandResult editor_term(Editor* editor, const char* args) {
+  if (args[0] == '\0' && editor->terminal != NULL && editor->terminal->visible) {
+    editor_terminal_close(editor);
+    return CommandResult_Success;
+  }
   TermPanel* panel = editor_terminal(editor);
   if (panel == NULL) {
     editor_set_error_message(editor, "Out of memory");
@@ -2271,7 +2276,7 @@ static void editor_terminal_key(Editor* editor, int key) {
         termpanel_input_char(panel, (char)key);
         panel->scroll = 0;
       } else if (key == '\t') {
-        termpanel_input_char(panel, '\t');
+        termpanel_complete(panel, editor->window.width);
       }
       break;
   }

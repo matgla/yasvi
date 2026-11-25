@@ -443,6 +443,10 @@ static int path_compare(const void* a, const void* b) {
 }
 
 int path_complete(const char* partial, char*** matches) {
+  return path_complete_in(NULL, partial, matches);
+}
+
+int path_complete_in(const char* base, const char* partial, char*** matches) {
   *matches = NULL;
   const char* slash = strrchr(partial, '/');
   size_t typed_dir_length = slash != NULL ? (size_t)(slash - partial) + 1 : 0;
@@ -451,7 +455,16 @@ int path_complete(const char* partial, char*** matches) {
 
   char* dir_path;
   if (typed_dir_length == 0) {
-    dir_path = fileops_strdup(".");
+    dir_path = fileops_strdup(base != NULL ? base : ".");
+  } else if (base != NULL && partial[0] != '/' && partial[0] != '~') {
+    char* typed = malloc(typed_dir_length + 1);
+    if (typed == NULL) {
+      return 0;
+    }
+    memcpy(typed, partial, typed_dir_length);
+    typed[typed_dir_length] = '\0';
+    dir_path = path_join(base, typed);
+    free(typed);
   } else {
     char* typed = malloc(typed_dir_length + 1);
     if (typed == NULL) {
