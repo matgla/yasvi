@@ -32,6 +32,7 @@ static const char* keywords_1[] = {
   "_Static_assert",       "_Thread_local",        "alignas",  "alignof",
   "constexpr",            "static_assert",        "thread_local",
   "typeof",   "typeof_unqual",        "asm",      "__asm__",  "__attribute__",
+  "__typeof__",           "__auto_type",
   NULL};
 
 // C types
@@ -48,9 +49,19 @@ static const char* types[] = {
 // everywhere else, so each one is checked against its neighbours
 // (yasc_word_token). The same rules as tools/vscode-yasc.
 static const char* yasc_keywords[] = {
-  "owned",    "view",       "maybe",      "out",    "drop",   "defer",
-  "errdefer", "try",        "catch",      "error",  "module", "import",
-  "export",   "error_name", "error_from", "move",   "borrow", NULL};
+  "owned",    "view",     "maybe",      "out",        "drop",
+  "inout",    "in",
+  "defer",    "errdefer", "try",        "catch",      "error",   "module",
+  "import",   "export",   "error_name", "error_from", "move",    "borrow",
+  "unsafe",   "borrows",  "takes",      "when",       "ro",      "wo",
+  "w1c",      "unreachable", NULL};
+
+// C words after which a yasc word is not a qualifier or a register field's mark:
+// `struct view`, `return ro;`, `const my_t ro;` are regular C
+static const char* yasc_not_before[] = {
+  "struct", "union",   "enum",     "typedef", "const",  "volatile", "static",
+  "extern", "register","inline",   "restrict","return", "case",     "goto",
+  "else",   "do",      "sizeof",   "typeof",  "alignof",NULL};
 
 // lang_state bits
 #define C_STATE_ERROR_SET 0x01   // inside the braces of `error Set { ... }`
@@ -146,6 +157,150 @@ static bool is_qualifier_after_star(const char* line, int start, int end) {
          word_is(line, start, end, "maybe");
 }
 
+// What may stand in a parameter array's brackets beside a pointer qualifier
+static bool is_bracket_word(const char* line, int start, int end) {
+  return is_qualifier_after_star(line, start, end) || word_is(line, start, end, "restrict") ||
+         word_is(line, start, end, "const") || word_is(line, start, end, "volatile") ||
+         word_is(line, start, end, "static");
+}
+
+// `char * view argv[owned]`, `int a[maybe 4]`: a parameter array's
+// brackets qualify the pointer it becomes, as C99's `a[const]` -- after
+// `name[` and other such words, with only words and numbers up to the ']'
+static bool in_param_brackets(const HighlightContext* ctx, int start, int end) {
+  const char* line = ctx->line;
+  int p = skip_blanks_back(ctx, start);
+  while (p >= 0 && is_ident_char(line[p])) {
+    int stop = 0;
+    const int w = word_before(ctx, p + 1, &stop);
+    if (w < 0 || !is_bracket_word(line, w, stop)) {
+      return false;
+    }
+    p = skip_blanks_back(ctx, w);
+  }
+  if (p < 0 || line[p] != '[') {
+    return false;
+  }
+  const int q = skip_blanks_back(ctx, p);
+  if (q < 0 || !is_ident_char(line[q])) {
+    return false;
+  }
+  for (int i = end; i < ctx->len; ++i) {
+    if (line[i] == ']') {
+      return true;
+    }
+    if (!is_ident_char(line[i]) && !is_space(line[i])) {
+      return false;
+    }
+  }
+  return false;
+}
+
+// owned(dealloc), borrows(x, ...), takes(p): the qualifiers with a list
+static bool is_qualifier_with_list(const char* line, int start, int end) {
+  return word_is(line, start, end, "owned") || word_is(line, start, end, "borrows") ||
+         word_is(line, start, end, "takes");
+}
+
+// The position just after the ')' closing the '(' at `open` (no nesting), or -1
+static int list_end(const HighlightContext* ctx, int open) {
+  for (int i = open + 1; i < ctx->len; ++i) {
+    if (ctx->line[i] == '(') {
+      return -1;
+    }
+    if (ctx->line[i] == ')') {
+      return i + 1;
+    }
+  }
+  return -1;
+}
+
+// A pointer qualifier may come here: after a '*', after owned / view / maybe,
+// or after the list of owned(...) / borrows(...) / takes(...)
+static bool in_qualifier_position(const HighlightContext* ctx, int start) {
+  const char* line = ctx->line;
+  const int p = skip_blanks_back(ctx, start);
+  if (p < 0) {
+    return false;
+  }
+  if (line[p] == '*') {
+    return true;
+  }
+  if (line[p] == ')') {
+    int open = p - 1;
+    while (open >= 0 && line[open] != '(' && line[open] != ')') {
+      --open;
+    }
+    if (open < 0 || line[open] != '(') {
+      return false;
+    }
+    int stop = 0;
+    const int w = word_before(ctx, open, &stop);
+    return w >= 0 && is_qualifier_with_list(line, w, stop) && !after_member_access(ctx, w);
+  }
+  int stop = 0;
+  const int w = word_before(ctx, start, &stop);
+  return w >= 0 && is_qualifier_after_star(line, w, stop);
+}
+
+// A name (not a number, not a C keyword) just before `start`, after a blank:
+// a type in `int view fd`, `regex_t owned(regfree) re`, `struct t borrows(x) {`
+static bool after_type_name(const HighlightContext* ctx, int start) {
+  int stop = 0;
+  const int w = word_before(ctx, start, &stop);
+  if (w < 0 || stop == start || !is_ident_start(ctx->line[w])) {
+    return false;
+  }
+  return !is_token(yasc_not_before, &ctx->line[w], stop - w) &&
+         !is_token(keywords_1, &ctx->line[w], stop - w) && !after_member_access(ctx, w);
+}
+
+// After a qualifier's list a declaration goes on: a name, '*', '{' (a struct's
+// borrows(x)), or the end of the line
+static bool declaration_follows_list(const HighlightContext* ctx, int open) {
+  const int e = list_end(ctx, open);
+  if (e < 0) {
+    return false;
+  }
+  const int n = skip_blanks(ctx, e);
+  return n == ctx->len || is_ident_start(ctx->line[n]) || ctx->line[n] == '*' ||
+         ctx->line[n] == '{';
+}
+
+// `uint32_t status w1c;`: ro / wo / w1c after a member's declarator -- a name
+// after a type (not `int ro;`, `struct s ro;`, `return ro;`), `*p`, a bit-field
+// width (`irq:1`) or an array (`fifo[4]`)
+static bool after_member_declarator(const HighlightContext* ctx, int start) {
+  const char* line = ctx->line;
+  const int p = skip_blanks_back(ctx, start);
+  if (p < 0 || p == start - 1) {
+    return false;
+  }
+  if (line[p] == ']') {
+    return true;
+  }
+  int stop = 0;
+  const int w = word_before(ctx, start, &stop);
+  if (w < 0) {
+    return false;
+  }
+  const int before = skip_blanks_back(ctx, w);
+  if (!is_ident_start(line[w])) {
+    return before >= 0 && line[before] == ':';  // irq:1 w1c
+  }
+  if (is_token(yasc_not_before, &line[w], stop - w) || is_token(keywords_1, &line[w], stop - w) ||
+      is_token(types, &line[w], stop - w)) {
+    return false;
+  }
+  if (before >= 0 && line[before] == '*') {
+    return true;
+  }
+  int stop2 = 0;
+  const int w2 = word_before(ctx, w, &stop2);
+  return w2 >= 0 && stop2 < w && is_ident_start(line[w2]) &&
+         !is_token(yasc_not_before, &line[w2], stop2 - w2);
+}
+
 // `error` (not a member) just before `start`, as in `error Set` or `error.Name`
 static bool error_keyword_before(const HighlightContext* ctx, int start, char sep) {
   int p = sep == '.' ? start - 1 : start;
@@ -189,19 +344,69 @@ static int yasc_word_token(const HighlightContext* ctx, int start, int end) {
   const char next = next_at < ctx->len ? line[next_at] : '\0';
   const bool eol = next_at == ctx->len;
 
-  // owned / view / maybe qualify a pointer: after its '*' (or another of them)
-  if (is_qualifier_after_star(line, start, end)) {
-    const int p = skip_blanks_back(ctx, start);
-    int stop = 0;
-    const int w = word_before(ctx, start, &stop);
-    const bool after_star = (p >= 0 && line[p] == '*') ||
-                            (w >= 0 && is_qualifier_after_star(line, w, stop));
-    return after_star && (eol || is_ident_start(next) || next == '*' || next == ')' || next == ',')
+  // owned / view / maybe qualify a pointer: after its '*' (or another
+  // qualifier); owned(dealloc), borrows(x), takes(p) there too
+  const bool listed = next == '(' && is_qualifier_with_list(line, start, end);
+  if (is_qualifier_after_star(line, start, end) || listed) {
+    if (in_qualifier_position(ctx, start)) {
+      if (listed) {
+        return EHighlightToken_Keyword;
+      }
+      if (word_is(line, start, end, "takes") || word_is(line, start, end, "borrows")) {
+        return -1;
+      }
+      return eol || is_ident_start(next) || next == '*' || next == ')' || next == ','
+                 ? EHighlightToken_Keyword
+                 : -1;
+    }
+    if (!listed && in_param_brackets(ctx, start, end)) {
+      return EHighlightToken_Keyword;
+    }
+    // after a type: int handles (`int view fd`, `int owned(close) maybe fd`),
+    // owned objects (`regex_t owned(regfree) re`), `struct t borrows(text) {`
+    if (!after_type_name(ctx, start) || word_is(line, start, end, "takes")) {
+      return -1;
+    }
+    if (listed) {
+      return declaration_follows_list(ctx, next_at) ? EHighlightToken_Keyword : -1;
+    }
+    return next_at > end && is_ident_start(next) && !word_is(line, start, end, "borrows")
                ? EHighlightToken_Keyword
                : -1;
   }
-  // out / drop come before a parameter's type
-  if (word_is(line, start, end, "out") || word_is(line, start, end, "drop")) {
+  if (word_is(line, start, end, "borrows") || word_is(line, start, end, "takes")) {
+    return -1;
+  }
+  // unsafe { ... }, unsafe(expr)
+  if (word_is(line, start, end, "unsafe")) {
+    return next == '{' || next == '(' ? EHighlightToken_Keyword : -1;
+  }
+  // `long i when(V_INT);` in a tagged union: after a member's name (not
+  // `#define when(e)`)
+  if (word_is(line, start, end, "when")) {
+    const int p = skip_blanks_back(ctx, start);
+    if (next != '(' || p < 0 || p == start - 1) {
+      return -1;
+    }
+    int stop = 0;
+    const int w = word_before(ctx, start, &stop);
+    return line[p] == ']' || (w >= 0 && !is_token(yasc_not_before, &line[w], stop - w) &&
+                              !is_token(keywords_1, &line[w], stop - w) &&
+                              !word_is(line, w, stop, "define"))
+               ? EHighlightToken_Keyword
+               : -1;
+  }
+  // register fields: `uint32_t irq:1 w1c;`, `volatile uint32_t id ro;`
+  if (word_is(line, start, end, "ro") || word_is(line, start, end, "wo") ||
+      word_is(line, start, end, "w1c")) {
+    return (next == ';' || next == ',') && after_member_declarator(ctx, start)
+               ? EHighlightToken_Keyword
+               : -1;
+  }
+  // out / inout / in / drop come before a parameter's type (`FILE *in`,
+  // `in = 0` stay names: no type follows)
+  if (word_is(line, start, end, "out") || word_is(line, start, end, "drop") ||
+      word_is(line, start, end, "inout") || word_is(line, start, end, "in")) {
     return next_at > end && is_ident_start(next) ? EHighlightToken_Keyword : -1;
   }
   if (word_is(line, start, end, "defer") || word_is(line, start, end, "errdefer")) {
@@ -212,6 +417,22 @@ static int yasc_word_token(const HighlightContext* ctx, int start, int end) {
   if (word_is(line, start, end, "try")) {
     return is_ident_start(next) || next == '(' || next == '*' || next == '&' ? EHighlightToken_Keyword
                                                                              : -1;
+  }
+  // unreachable: an expression of its own -- `unreachable;`, `default:
+  // unreachable;`, `f() catch unreachable` -- not a name being declared
+  // (`int unreachable;`), called (`unreachable()`) or assigned
+  if (word_is(line, start, end, "unreachable")) {
+    if (eol || strchr(";,)}", next) == NULL) {
+      return -1;
+    }
+    const int p = skip_blanks_back(ctx, start);
+    if (p < 0 || strchr(";{}:)", line[p]) != NULL) {
+      return EHighlightToken_Keyword;
+    }
+    int stop = 0;
+    const int w = word_before(ctx, start, &stop);
+    return w >= 0 && (word_is(line, w, stop, "else") || word_is(line, w, stop, "catch")) ? EHighlightToken_Keyword
+                                                                                          : -1;
   }
   // f() catch X, catch |e| {...}: after the end of an expression, or first on a
   // continuation line
@@ -307,6 +528,14 @@ static bool is_error_union_bang(const HighlightContext* ctx, int i) {
     }
     if (k < ctx->len && is_ident_start(ctx->line[k])) {
       const int ke = word_end(ctx, k);
+      const int open = skip_blanks(ctx, ke);
+      if (open < ctx->len && ctx->line[open] == '(' && is_qualifier_with_list(ctx->line, k, ke)) {
+        const int le = list_end(ctx, open);
+        if (le > 0) {
+          j = le;
+          continue;
+        }
+      }
       if (is_qualifier_after_star(ctx->line, k, ke)) {
         j = ke;
         continue;
@@ -323,6 +552,59 @@ static bool is_error_union_bang(const HighlightContext* ctx, int i) {
   }
   const int paren = skip_blanks(ctx, word_end(ctx, name));
   return paren < ctx->len && ctx->line[paren] == '(';
+}
+
+// `[]T`, `[:0]T`, `[][]T`: a slice prefix goes before the type, as `!T`. The
+// end of the brackets, or -1. A '[' after a name, ')', ']' or a quote indexes
+// (`int a[] __attribute__((x))`), except after a storage-class word
+// (`static []const char s`); a type name must follow.
+static int slice_type_end(const HighlightContext* ctx, int i) {
+  static const char* storage_words[] = {"static", "extern", "register", "typedef", "inline",
+                                        "auto", "constexpr", "_Thread_local", "thread_local",
+                                        NULL};
+  const char* line = ctx->line;
+  const int prev = skip_blanks_back(ctx, i);
+  if (prev >= 0 && (is_ident_char(line[prev]) || strchr(")]\"'", line[prev]) != NULL)) {
+    int stop = 0;
+    const int w = word_before(ctx, i, &stop);
+    if (w < 0 || !is_token(storage_words, &line[w], stop - w)) {
+      return -1;
+    }
+  }
+  int end = -1;
+  int j = i;
+  while (j < ctx->len && line[j] == '[') {
+    int k = skip_blanks(ctx, j + 1);
+    if (k < ctx->len && line[k] == ':') {
+      k = skip_blanks(ctx, k + 1);
+      if (k >= ctx->len || line[k] != '0') {
+        break;
+      }
+      k = skip_blanks(ctx, k + 1);
+    }
+    if (k >= ctx->len || line[k] != ']') {
+      break;
+    }
+    end = k + 1;
+    j = skip_blanks(ctx, end);
+  }
+  if (end < 0 || j >= ctx->len || !is_ident_start(line[j])) {
+    return -1;
+  }
+  return end;
+}
+
+// @min( / @max(: tcc's short builtins (any C file). The end of the name, or -1
+static int at_builtin_end(const HighlightContext* ctx, int i) {
+  if (ctx->line[i] != '@') {
+    return -1;
+  }
+  const int end = word_end(ctx, i + 1);
+  if (!word_is(ctx->line, i + 1, end, "min") && !word_is(ctx->line, i + 1, end, "max")) {
+    return -1;
+  }
+  const int paren = skip_blanks(ctx, end);
+  return paren < ctx->len && ctx->line[paren] == '(' ? end : -1;
 }
 
 static void mark(HighlightContext* ctx, int start, int end, int token) {
@@ -504,6 +786,18 @@ static void c_highlight(HighlightContext* ctx) {
       }
 
       if (token_start == -1) {
+        const int at_end = at_builtin_end(ctx, i);
+        if (at_end > 0) {
+          mark(ctx, i, at_end, EHighlightToken_Keyword);
+          i = at_end - 1;
+          continue;
+        }
+        const int slice_end = ctx->line[i] == '[' ? slice_type_end(ctx, i) : -1;
+        if (slice_end > 0) {
+          mark(ctx, i, slice_end, EHighlightToken_Type);
+          i = slice_end - 1;
+          continue;
+        }
         if (ctx->line[i] == '}') {
           ctx->lang_state &= ~C_STATE_ERROR_SET;
         }

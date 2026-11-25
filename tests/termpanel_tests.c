@@ -27,9 +27,11 @@
 #include "editor.h"
 #include "termpanel.h"
 
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -302,6 +304,180 @@ void test_editor_term_panel_keys(void) {
   editor_deinit(&editor);
 }
 
+/* ---- Tab completion ------------------------------------------------------ */
+
+static void touch_file(const char* dir, const char* name) {
+  char path[512];
+  snprintf(path, sizeof(path), "%s/%s", dir, name);
+  const int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0755);
+  TEST_ASSERT(fd >= 0);
+  close(fd);
+}
+
+static void make_dir(const char* dir, const char* name) {
+  char path[512];
+  snprintf(path, sizeof(path), "%s/%s", dir, name);
+  TEST_ASSERT(mkdir(path, 0755) == 0);
+}
+
+static void set_input(TermPanel* panel, const char* text) {
+  termpanel_input_clear(panel);
+  for (const char* c = text; *c != '\0'; ++c) {
+    termpanel_input_char(panel, *c);
+  }
+}
+
+static void remove_tree(const char* dir) {
+  char cmd[600];
+  snprintf(cmd, sizeof(cmd), "rm -rf '%s'", dir);
+  TEST_CHECK(system(cmd) == 0);
+}
+
+// File names come from the shell's directory (after its cd), not vi's.
+void test_complete_files_in_shell_directory(void) {
+  char dir[] = "/tmp/yasvi_complete_XXXXXX";
+  TEST_ASSERT(mkdtemp(dir) != NULL);
+  touch_file(dir, "alpha.txt");
+  make_dir(dir, "alpine");
+  touch_file(dir, "alpine/inner.c");
+  touch_file(dir, "beta file.c");
+  touch_file(dir, ".hidden");
+
+  TermPanel panel;
+  termpanel_init(&panel);
+  TEST_ASSERT(termpanel_start(&panel));
+  char cd[600];
+  snprintf(cd, sizeof(cd), "cd '%s' && echo ready", dir);
+  TEST_ASSERT(termpanel_send_line(&panel, cd));
+  TEST_ASSERT(wait_for_line(&panel, "ready"));
+  char* cwd = termpanel_shell_cwd(&panel);
+  check_string(cwd, dir);
+  free(cwd);
+
+  set_input(&panel, "cat al");
+  TEST_CHECK(termpanel_complete(&panel, 80) == 2);
+  check_string(panel.input, "cat alp");  // what both start with
+  const int lines = termpanel_line_count(&panel);
+  TEST_CHECK(termpanel_complete(&panel, 80) == 2);  // nothing to add: listed
+  check_string(panel.input, "cat alp");
+  TEST_CHECK(termpanel_line_count(&panel) == lines + 1);
+  check_string(last_line(&panel), "alpha.txt  alpine/");
+  termpanel_input_char(&panel, 'h');
+  TEST_CHECK(termpanel_complete(&panel, 80) == 1);
+  check_string(panel.input, "cat alpha.txt ");
+
+  set_input(&panel, "ls alpi");
+  termpanel_complete(&panel, 80);
+  check_string(panel.input, "ls alpine/");  // a directory: no space
+  termpanel_complete(&panel, 80);
+  check_string(panel.input, "ls alpine/inner.c ");
+
+  set_input(&panel, "wc -l be");
+  termpanel_complete(&panel, 80);
+  check_string(panel.input, "wc -l beta\\ file.c ");
+  set_input(&panel, "wc \"beta f");
+  termpanel_complete(&panel, 80);
+  check_string(panel.input, "wc beta\\ file.c ");
+  set_input(&panel, "echo x > .h");
+  termpanel_complete(&panel, 80);
+  check_string(panel.input, "echo x > .hidden ");
+  set_input(&panel, "cat nothing");
+  TEST_CHECK(termpanel_complete(&panel, 80) == 0);
+  check_string(panel.input, "cat nothing");
+
+  // the listing packs names into lines of the given width
+  set_input(&panel, "ls ");
+  TEST_CHECK(termpanel_complete(&panel, 20) == 3);
+  check_string(termpanel_line(&panel, termpanel_line_count(&panel) - 2), "alpha.txt  alpine/");
+  check_string(last_line(&panel), "beta file.c");
+
+  termpanel_deinit(&panel);
+  remove_tree(dir);
+}
+
+// The first word of a command: shell builtins and the programs in PATH.
+void test_complete_commands(void) {
+  char dir[] = "/tmp/yasvi_complete_bin_XXXXXX";
+  TEST_ASSERT(mkdtemp(dir) != NULL);
+  touch_file(dir, "yvtool-one");
+  touch_file(dir, "yvtool-two");
+  make_dir(dir, "yvtool-dir");  // not a program
+  const char* old_path = getenv("PATH");
+  char* saved = strdup(old_path != NULL ? old_path : "/bin:/usr/bin");
+  char path[600];
+  snprintf(path, sizeof(path), "%s:%s", dir, saved);
+  setenv("PATH", path, 1);
+
+  TermPanel panel;
+  termpanel_init(&panel);
+  set_input(&panel, "yvto");
+  TEST_CHECK(termpanel_complete(&panel, 80) == 2);
+  check_string(panel.input, "yvtool-");
+  termpanel_input_char(&panel, 'o');
+  TEST_CHECK(termpanel_complete(&panel, 80) == 1);
+  check_string(panel.input, "yvtool-one ");
+  set_input(&panel, "echo x | yvtool-t");
+  termpanel_complete(&panel, 80);
+  check_string(panel.input, "echo x | yvtool-two ");
+  set_input(&panel, "true && yvtool-o");
+  termpanel_complete(&panel, 80);
+  check_string(panel.input, "true && yvtool-one ");
+  set_input(&panel, "unal");
+  TEST_CHECK(termpanel_complete(&panel, 80) == 1);
+  check_string(panel.input, "unalias ");
+  set_input(&panel, "echo yvtool");  // an argument: a file name, none here
+  TEST_CHECK(termpanel_complete(&panel, 80) == 0);
+  check_string(panel.input, "echo yvtool");
+  set_input(&panel, "");
+  TEST_CHECK(termpanel_complete(&panel, 80) == 0);  // not every program
+
+  termpanel_deinit(&panel);
+  setenv("PATH", saved, 1);
+  free(saved);
+  remove_tree(dir);
+}
+
+// Tab in the panel completes instead of typing a tab.
+void test_editor_term_tab_completes(void) {
+  char dir[] = "/tmp/yasvi_complete_ed_XXXXXX";
+  TEST_ASSERT(mkdtemp(dir) != NULL);
+  touch_file(dir, "unique_name.txt");
+  Editor editor;
+  setup_editor(&editor);
+  editor_create_new_file(&editor);
+  char cmd[600];
+  snprintf(cmd, sizeof(cmd), "term cd '%s' && echo there", dir);
+  enter_command(&editor, cmd);
+  TEST_ASSERT(editor.terminal != NULL && editor.terminal->focused);
+  TEST_ASSERT(editor_wait_for_line(&editor, "there"));
+  type(&editor, "cat uni");
+  editor_process_key(&editor, '\t');
+  check_string(editor.terminal->input, "cat unique_name.txt ");
+  editor_deinit(&editor);
+  remove_tree(dir);
+}
+
+// A bare :term with the panel open closes it (toggle); :term CMD keeps it.
+void test_editor_term_toggles_panel(void) {
+  Editor editor;
+  setup_editor(&editor);
+  editor_create_new_file(&editor);
+  enter_command(&editor, "term");
+  TEST_ASSERT(editor.terminal != NULL && termpanel_running(editor.terminal));
+  TermPanel* panel = editor.terminal;
+  const int pid = panel->pid;
+  editor_process_key(&editor, 27);  // back to the text
+  enter_command(&editor, "term echo still");
+  TEST_CHECK(editor.terminal == panel && panel->focused && panel->pid == pid);
+  TEST_CHECK(editor_wait_for_line(&editor, "still"));
+  editor_process_key(&editor, 27);
+  enter_command(&editor, "term");
+  TEST_CHECK(editor.terminal == NULL);
+  enter_command(&editor, "term");  // and opens it again
+  TEST_CHECK(editor.terminal != NULL && termpanel_running(editor.terminal));
+  editor_deinit(&editor);
+}
+
 void test_editor_insert_mode_keeps_enter(void) {
   Editor editor;
   setup_editor(&editor);
@@ -324,5 +500,9 @@ TEST_LIST = {
   {"shell_runs_commands_and_keeps_state", test_shell_runs_commands_and_keeps_state},
   {"interrupt_stops_command_not_shell", test_interrupt_stops_command_not_shell},
   {"editor_term_panel_keys", test_editor_term_panel_keys},
+  {"editor_term_toggles_panel", test_editor_term_toggles_panel},
   {"editor_insert_mode_keeps_enter", test_editor_insert_mode_keeps_enter},
+  {"complete_files_in_shell_directory", test_complete_files_in_shell_directory},
+  {"complete_commands", test_complete_commands},
+  {"editor_term_tab_completes", test_editor_term_tab_completes},
   {NULL, NULL}};

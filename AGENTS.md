@@ -612,6 +612,20 @@ wrapped, `$ ` and the typed line); with the focus there the cursor sits at
 the end of the typed line. `main.c` redraws when `editor_idle` (which calls
 `termpanel_poll`) says output arrived, not only after a key.
 
+Tab completes the word at the end of the typed line (`termpanel_complete`;
+the shell on a pipe does no line editing of its own): the first word of a
+command (line start, after `;` `|` `&` `(`) from toybox sh's builtins and
+vi's `PATH` (non-directories), any other word or one with a `/` as a file
+name relative to the SHELL's directory (`termpanel_shell_cwd`: the
+`/proc/PID/cwd` link, which the YasOS kernel has since 2026-11-24; vi's own
+directory when it is not there) through `path_complete_in`. One match
+replaces the word (a space after it, none after a directory's `/`), several
+are cut to their common start, and when that adds nothing they are listed in
+the scrollback, packed to the window's width (200 at most, then "... N
+more"). Inserted names get backslashes before blanks and shell characters;
+an open quote in the word is dropped. Tests: `termpanel_tests.c`
+`complete_*`, `editor_term_tab_completes`.
+
 Keys (`editor_terminal_handles_key`, right after recording, so the panel's
 keys are recorded too): with the focus in the panel, printable keys edit the
 line, Enter sends it, Backspace (127, ^H), Ctrl-U clears, Up/Down history (16
