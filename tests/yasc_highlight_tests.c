@@ -351,6 +351,23 @@ void test_yasc_lifetime_lists(void) {
   buffer_free(buffer);
 }
 
+// c_api(T): the C type, after a '*' only (a function of that name elsewhere)
+void test_yasc_c_api(void) {
+  const char* lines[] = {
+    "const char * borrows(static) maybe c_api(char *) dlerror(void);",
+    "long sl(const char *s, out const char * borrows(s) c_api(char *) * maybe end, int b);",
+    "int c_api(int x); y = c_api(3);",
+    NULL};
+  Buffer* buffer = c_buffer(lines);
+  TEST_CHECK(token_of(row_at(buffer, 0), "c_api") == K);
+  TEST_CHECK(token_of(row_at(buffer, 0), "dlerror") == N);
+  TEST_CHECK(token_of(row_at(buffer, 1), "c_api") == K);
+  TEST_CHECK(token_of(row_at(buffer, 1), "maybe end") == K);
+  TEST_CHECK(token_of(row_at(buffer, 2), "c_api") == N);
+  TEST_CHECK(token_of(row_at(buffer, 2), "c_api(3)") == N);
+  buffer_free(buffer);
+}
+
 void test_yasc_lifetime_lists_as_names(void) {
   const char* lines[] = {
     "int f(void) { return owned(x) + borrows(y) + takes(z); }",
@@ -437,6 +454,68 @@ void test_yasc_register_fields(void) {
   TEST_CHECK(token_of(row_at(buffer, 6), "wo") == N);
   TEST_CHECK(token_of(row_at(buffer, 6), "w1c") == N);
   TEST_CHECK(token_of(row_at(buffer, 6), "ro,") == N);
+  buffer_free(buffer);
+}
+
+// move(x) / borrow(x): operators, also inside a call and before a blank
+void test_yasc_move_borrow(void) {
+  const char* lines[] = {"void f(DIR * owned dir)", "{",
+                         "  memset(borrow(dir), 0, sizeof(*dir));",
+                         "  return g(move (dir), p->move(1), q.borrow (2), borrow);", "}", NULL};
+  Buffer* buffer = c_buffer(lines);
+  TEST_CHECK(token_of(row_at(buffer, 2), "borrow") == K);
+  TEST_CHECK(token_of(row_at(buffer, 2), "memset") == N);
+  TEST_CHECK(token_of(row_at(buffer, 3), "move (dir)") == K);
+  TEST_CHECK(token_of(row_at(buffer, 3), "move(1)") == N);
+  TEST_CHECK(token_of(row_at(buffer, 3), "borrow (2)") == N);
+  TEST_CHECK(token_of(row_at(buffer, 3), "borrow);") == N);
+  buffer_free(buffer);
+}
+
+// cast<PERMISSION(T), MODIFIER...>(x) / unsafe_cast<...>(x): the word and
+// its permissions are keywords; the types stay types; `cast < 3` compares
+void test_yasc_casts(void) {
+  const char* lines[] = {
+    "uint16_t port = cast<int(uint16_t)>(n); float f = cast< float (double) >(d);",
+    "auto de = cast<ptr(struct dirent *), align>(dir->buf + pos);",
+    "char * view hit = unsafe_cast<qual(char *)>(s); x = cast<align(4)>(p);",
+    "if (cast < as && trunc > 1) return cast(int, x); s.cast = p->unsafe_cast;",
+    "y = cast<trunc(uint8_t)>(f(a, int(b)));",
+    "m = unsafe_cast<const(char *)>(g); e = unsafe_cast<ptr(char *), const>(lit);",
+    NULL};
+  Buffer* buffer = c_buffer(lines);
+  BufferRow* row = row_at(buffer, 0);
+  TEST_CHECK(token_of(row, "cast<int") == K);
+  TEST_CHECK(token_of(row, "int(uint16_t)") == K);
+  TEST_CHECK(token_of(row, "uint16_t)") == T);
+  TEST_CHECK(token_of(row, "cast< float") == K);
+  TEST_CHECK(token_of(row, "float (double)") == K);
+  TEST_CHECK(token_of(row, "double") == T);
+  TEST_CHECK(token_of(row, "float f") == T);
+  row = row_at(buffer, 1);
+  TEST_CHECK(token_of(row, "cast") == K);
+  TEST_CHECK(token_of(row, "ptr") == K);
+  TEST_CHECK(token_of(row, "align") == K);
+  TEST_CHECK(token_of(row, "dirent") == N);
+  row = row_at(buffer, 2);
+  TEST_CHECK(token_of(row, "unsafe_cast") == K);
+  TEST_CHECK(token_of(row, "qual") == K);
+  TEST_CHECK(token_of(row, "align(4)") == K);
+  row = row_at(buffer, 3);
+  TEST_CHECK(token_of(row, "cast <") == N);
+  TEST_CHECK(token_of(row, "as &&") == N);
+  TEST_CHECK(token_of(row, "trunc >") == N);
+  TEST_CHECK(token_of(row, "cast(int") == N);
+  TEST_CHECK(token_of(row, "int, x") == T);
+  TEST_CHECK(token_of(row, "cast =") == N);
+  TEST_CHECK(token_of(row, "unsafe_cast;") == N);
+  row = row_at(buffer, 4);
+  TEST_CHECK(token_of(row, "trunc") == K);
+  TEST_CHECK(token_of(row, "int(b)") == T);
+  row = row_at(buffer, 5);
+  TEST_CHECK(token_of(row, "const(char") == K);
+  TEST_CHECK(token_of(row, "const>") == K);
+  TEST_CHECK(token_of(row, "ptr") == K);
   buffer_free(buffer);
 }
 
@@ -582,10 +661,13 @@ TEST_LIST = {
     {"test_yasc_words_as_names", test_yasc_words_as_names},
     {"test_yasc_defer", test_yasc_defer},
     {"test_yasc_unreachable", test_yasc_unreachable},
+    {"test_yasc_casts", test_yasc_casts},
     {"test_yasc_errors", test_yasc_errors},
+    {"test_yasc_move_borrow", test_yasc_move_borrow},
     {"test_yasc_modules", test_yasc_modules},
     {"test_yasc_lifetime_lists", test_yasc_lifetime_lists},
     {"test_yasc_lifetime_lists_as_names", test_yasc_lifetime_lists_as_names},
+    {"test_yasc_c_api", test_yasc_c_api},
     {"test_yasc_unsafe", test_yasc_unsafe},
     {"test_yasc_tagged_union", test_yasc_tagged_union},
     {"test_yasc_register_fields", test_yasc_register_fields},

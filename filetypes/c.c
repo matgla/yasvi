@@ -54,7 +54,12 @@ static const char* yasc_keywords[] = {
   "defer",    "errdefer", "try",        "catch",      "error",   "module",
   "import",   "export",   "error_name", "error_from", "move",    "borrow",
   "unsafe",   "borrows",  "takes",      "when",       "ro",      "wo",
-  "w1c",      "unreachable", NULL};
+  "w1c",      "unreachable", "cast",    "unsafe_cast", "c_api", NULL};
+
+// The permissions and modifiers of cast<...> / unsafe_cast<...>: keywords only
+// inside that list (int(T), float(T), enum(T) there are permissions, not types)
+static const char* yasc_cast_permissions[] = {
+  "as", "int", "trunc", "bits", "float", "enum", "ptr", "align", "addr", "qual", "const", "fn", NULL};
 
 // C words after which a yasc word is not a qualifier or a register field's mark:
 // `struct view`, `return ro;`, `const my_t ro;` are regular C
@@ -196,10 +201,10 @@ static bool in_param_brackets(const HighlightContext* ctx, int start, int end) {
   return false;
 }
 
-// owned(dealloc), borrows(x, ...), takes(p): the qualifiers with a list
+// owned(dealloc), borrows(x, ...), takes(p), c_api(T): the qualifiers with a list
 static bool is_qualifier_with_list(const char* line, int start, int end) {
   return word_is(line, start, end, "owned") || word_is(line, start, end, "borrows") ||
-         word_is(line, start, end, "takes");
+         word_is(line, start, end, "takes") || word_is(line, start, end, "c_api");
 }
 
 // The position just after the ')' closing the '(' at `open` (no nesting), or -1
@@ -335,6 +340,58 @@ static bool module_name_follows(const HighlightContext* ctx, int end) {
 }
 
 // The token of a yasc word in this position, or -1 when it is a name here
+// A cast permission: one of yasc_cast_permissions at `start`, followed by
+// '(', ',' or '>'
+static bool is_cast_permission_at(const HighlightContext* ctx, int start, int* stop) {
+  const int end = word_end(ctx, start);
+  if (end == start || !is_token(yasc_cast_permissions, &ctx->line[start], end - start)) {
+    return false;
+  }
+  const int next = skip_blanks(ctx, end);
+  if (stop != NULL) {
+    *stop = end;
+  }
+  return next < ctx->len && strchr("(,>", ctx->line[next]) != NULL;
+}
+
+// cast< / unsafe_cast< opening a permission list: the word ends at `end`, a
+// '<' and a permission follow (`cast < 3` compares a variable named cast)
+static bool cast_list_follows(const HighlightContext* ctx, int end) {
+  const int lt = skip_blanks(ctx, end);
+  if (lt >= ctx->len || ctx->line[lt] != '<') {
+    return false;
+  }
+  return is_cast_permission_at(ctx, skip_blanks(ctx, lt + 1), NULL);
+}
+
+// The word at [start, end) is a permission in a cast's list: right after
+// `cast<` / `unsafe_cast<`, or after a ',' at parenthesis depth 0 of that list
+static bool in_cast_list(const HighlightContext* ctx, int start, int end) {
+  const char* line = ctx->line;
+  if (!is_cast_permission_at(ctx, start, NULL) || word_end(ctx, start) != end) {
+    return false;
+  }
+  int depth = 0;
+  for (int i = skip_blanks_back(ctx, start); i >= 0; --i) {
+    const char c = line[i];
+    if (c == ')') {
+      ++depth;
+    } else if (c == '(') {
+      if (--depth < 0) {
+        return false;
+      }
+    } else if (strchr(";{}>\"'", c) != NULL) {
+      return false;
+    } else if (c == '<' && depth == 0) {
+      int stop = 0;
+      const int w = word_before(ctx, i, &stop);
+      return w >= 0 && (word_is(line, w, stop, "cast") || word_is(line, w, stop, "unsafe_cast")) &&
+             cast_list_follows(ctx, stop);
+    }
+  }
+  return false;
+}
+
 static int yasc_word_token(const HighlightContext* ctx, int start, int end) {
   const char* line = ctx->line;
   if (after_member_access(ctx, start)) {
@@ -352,7 +409,8 @@ static int yasc_word_token(const HighlightContext* ctx, int start, int end) {
       if (listed) {
         return EHighlightToken_Keyword;
       }
-      if (word_is(line, start, end, "takes") || word_is(line, start, end, "borrows")) {
+      if (word_is(line, start, end, "takes") || word_is(line, start, end, "borrows") ||
+          word_is(line, start, end, "c_api")) {
         return -1;
       }
       return eol || is_ident_start(next) || next == '*' || next == ')' || next == ','
@@ -364,7 +422,7 @@ static int yasc_word_token(const HighlightContext* ctx, int start, int end) {
     }
     // after a type: int handles (`int view fd`, `int owned(close) maybe fd`),
     // owned objects (`regex_t owned(regfree) re`), `struct t borrows(text) {`
-    if (!after_type_name(ctx, start) || word_is(line, start, end, "takes")) {
+    if (!after_type_name(ctx, start) || word_is(line, start, end, "takes") || word_is(line, start, end, "c_api")) {
       return -1;
     }
     if (listed) {
@@ -374,7 +432,8 @@ static int yasc_word_token(const HighlightContext* ctx, int start, int end) {
                ? EHighlightToken_Keyword
                : -1;
   }
-  if (word_is(line, start, end, "borrows") || word_is(line, start, end, "takes")) {
+  if (word_is(line, start, end, "borrows") || word_is(line, start, end, "takes") ||
+      word_is(line, start, end, "c_api")) {
     return -1;
   }
   // unsafe { ... }, unsafe(expr)
@@ -456,6 +515,10 @@ static int yasc_word_token(const HighlightContext* ctx, int start, int end) {
       return EHighlightToken_Keyword;
     }
     return next_at > end && is_ident_start(next) ? EHighlightToken_Keyword : -1;
+  }
+  // cast<PERMISSION(T), MODIFIER...>(x), unsafe_cast<...>(x)
+  if (word_is(line, start, end, "cast") || word_is(line, start, end, "unsafe_cast")) {
+    return cast_list_follows(ctx, end) ? EHighlightToken_Keyword : -1;
   }
   if (word_is(line, start, end, "error_name") || word_is(line, start, end, "error_from") ||
       word_is(line, start, end, "move") || word_is(line, start, end, "borrow")) {
@@ -618,6 +681,9 @@ static bool highlight_token(HighlightContext* ctx, int token_start, int i) {
   int token = -1;
   if (is_token(yasc_keywords, &ctx->line[token_start], n)) {
     token = yasc_word_token(ctx, token_start, i);
+  }
+  if (token < 0 && in_cast_list(ctx, token_start, i)) {
+    token = EHighlightToken_Keyword;
   }
   if (token < 0) {
     token = yasc_error_word_token(ctx, token_start, i);
