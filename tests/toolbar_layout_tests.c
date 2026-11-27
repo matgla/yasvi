@@ -15,6 +15,7 @@
  along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
+#define _GNU_SOURCE /* strlcpy */
 #include "acutest.h"
 
 #include "mock_ncurses.h"
@@ -228,7 +229,7 @@ void test_toolbar_position_holds_still_when_a_key_sequence_appears(void) {
 
   /* Half a multi-key command: its readout shares the right edge with the
      position, whose slot must not be pushed aside to make room. */
-  strcpy(editor.key_sequence, "d");
+  strlcpy(editor.key_sequence, "d", sizeof(editor.key_sequence));
   toolbar_update(&toolbar, &editor);
   TEST_CHECK(position->cached_x == x_without_sequence);
 

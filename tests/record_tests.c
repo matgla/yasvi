@@ -529,10 +529,10 @@ void test_editor_records_terminal(void) {
     char rest[112] = "";
     if (sscanf(lines[i], "%15s %lld %111[^\n]", word, &at, rest) >= 2 &&
         strcmp(word, "session") != 0 && (word[0] < '0' || word[0] > '9')) {
-      strcat(words, word);
-      strcat(words, rest[0] != '\0' ? " " : "");
-      strcat(words, rest);
-      strcat(words, "|");
+      strlcat(words, word, sizeof(words));
+      strlcat(words, rest[0] != '\0' ? " " : "", sizeof(words));
+      strlcat(words, rest, sizeof(words));
+      strlcat(words, "|", sizeof(words));
     }
   }
   check_string(words,

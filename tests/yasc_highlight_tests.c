@@ -71,12 +71,12 @@ static int token_of(const BufferRow* row, const char* needle) {
 
 void test_yasc_ownership_qualifiers(void) {
   const char* lines[] = {
-    "char * owned dup(const char * view s);",
-    "void fill(out int * view p, drop char * owned q, int * view maybe m)",
-    "  char * owned * view argv = 0;",
-    "  struct name * owned maybe next;",
-    "  int f(char * view, int *view);",
-    "int main(int argc, char * view * view argv) {",
+    "char *owned dup(const char *view s);",
+    "void fill(out int *view p, drop char *owned q, int *?view m)",
+    "  char *owned *view argv = 0;",
+    "  struct name *?owned next;",
+    "  int f(char *view, int *view);",
+    "int main(int argc, char *view *view argv) {",
     NULL};
   Buffer* buffer = c_buffer(lines);
   TEST_CHECK(token_of(row_at(buffer, 0), "owned") == K);
@@ -86,11 +86,11 @@ void test_yasc_ownership_qualifiers(void) {
   TEST_CHECK(token_of(row_at(buffer, 1), "view p") == K);
   TEST_CHECK(token_of(row_at(buffer, 1), "drop") == K);
   TEST_CHECK(token_of(row_at(buffer, 1), "owned q") == K);
-  TEST_CHECK(token_of(row_at(buffer, 1), "maybe") == K);
+  TEST_CHECK(token_of(row_at(buffer, 1), "view m") == K);
   TEST_CHECK(token_of(row_at(buffer, 2), "owned") == K);
   TEST_CHECK(token_of(row_at(buffer, 2), "view") == K);
   TEST_CHECK(token_of(row_at(buffer, 3), "owned") == K);
-  TEST_CHECK(token_of(row_at(buffer, 3), "maybe") == K);
+  TEST_CHECK(token_of(row_at(buffer, 3), "owned next") == K);
   TEST_CHECK(token_of(row_at(buffer, 4), "view,") == K);
   TEST_CHECK(token_of(row_at(buffer, 4), "view)") == K);
   TEST_CHECK(token_of(row_at(buffer, 5), "view *") == K);
@@ -102,9 +102,9 @@ void test_yasc_ownership_qualifiers(void) {
 // `const T * view`): a name wherever it stands
 void test_yasc_brackets_and_readonly_name(void) {
   const char* lines[] = {
-    "int main(int argc, const char * view * view argv);",
-    "int count(char * view a[owned], int b[maybe 4], char * view c[view restrict]);",
-    "const char * view maybe name(const char *view s);",
+    "int main(int argc, const char *view *view argv);",
+    "int count(char *view a[owned], int b[?4], char *view c[view restrict]);",
+    "const char *?view name(const char *view s);",
     "int readonly = 3; char *uid = 0, *readonly[] = {0};",
     "n = ARRAY_LEN(readonly); y = x * readonly; int readonly x; char * readonly p;",
     NULL};
@@ -113,11 +113,9 @@ void test_yasc_brackets_and_readonly_name(void) {
   TEST_CHECK(token_of(row_at(buffer, 0), "view argv") == K);
   TEST_CHECK(token_of(row_at(buffer, 0), "argv") == N);
   TEST_CHECK(token_of(row_at(buffer, 1), "owned]") == K);
-  TEST_CHECK(token_of(row_at(buffer, 1), "maybe") == K);
   TEST_CHECK(token_of(row_at(buffer, 1), "view c") == K);
   TEST_CHECK(token_of(row_at(buffer, 1), "view restrict") == K);
-  TEST_CHECK(token_of(row_at(buffer, 2), "view maybe") == K);
-  TEST_CHECK(token_of(row_at(buffer, 2), "maybe") == K);
+  TEST_CHECK(token_of(row_at(buffer, 2), "view name") == K);
   TEST_CHECK(token_of(row_at(buffer, 2), "view s") == K);
   TEST_CHECK(token_of(row_at(buffer, 3), "readonly =") == N);
   TEST_CHECK(token_of(row_at(buffer, 3), "readonly[]") == N);
@@ -139,7 +137,7 @@ void test_yasc_words_as_names(void) {
     "  goto out;",
     "  x = a * view + b;",
     "f(a, view); drop = 1; maybe [2]; out : 3; owned, x;",
-    "  /* owned view */ const char * view str = \"defer owned\";",
+    "  /* owned view */ const char *view str = \"defer owned\";",
     "  if (!error.is_warning) error = report.error;",
     "  int error = 0; try = catch; module = import + export;",
     NULL};
@@ -218,6 +216,29 @@ void test_yasc_unreachable(void) {
   buffer_free(buffer);
 }
 
+void test_yasc_undefined(void) {
+  const char* lines[] = {
+    "  struct stat st = undefined;",
+    "  int k = undefined; sscanf(s, \"%d\", &k);",
+    "  int a = undefined, b = 1;",
+    "  int k=undefined;",
+    "  int undefined;",
+    "  if (x == undefined) {",
+    "  x += undefined;",
+    "  undefined;",
+    "  s.undefined = 1;",
+    "  f(undefined);",
+    NULL};
+  Buffer* buffer = c_buffer(lines);
+  for (int i = 0; i < 4; ++i) {
+    TEST_CHECK_(token_of(row_at(buffer, i), "undefined") == K2, "line %d", i);
+  }
+  for (int i = 4; i < 10; ++i) {
+    TEST_CHECK_(token_of(row_at(buffer, i), "undefined") == N, "line %d", i);
+  }
+  buffer_free(buffer);
+}
+
 void test_yasc_errors(void) {
   const char* lines[] = {
     "error ParseError { Empty, BadDigit = 7, TooBig };",
@@ -225,10 +246,10 @@ void test_yasc_errors(void) {
     "{",
     "  FileNotFound = ENOENT, /* errno */ BadPath",
     "};",
-    "static !int parse_int(const char * view s);",
-    "!char * owned make_label(const char * view num);",
-    "!vec2_t vec_parse(const char * view s);",
-    "!struct stack * owned stack_new(int cap);",
+    "static !int parse_int(const char *view s);",
+    "!char *owned make_label(const char *view num);",
+    "!vec2_t vec_parse(const char *view s);",
+    "!struct stack *owned stack_new(int cap);",
     "static !int add(error ParseError pe, error any)",
     "  if (!ok) return error.Empty;",
     "  int v = try parse_int(a) + try parse_int(b);",
@@ -303,25 +324,26 @@ void test_yasc_modules(void) {
 // owned(dealloc), borrows(x), takes(p), int handles, owned objects
 void test_yasc_lifetime_lists(void) {
   const char* lines[] = {
-    "FILE * owned(fclose) maybe fopen(const char * view path, const char * view mode);",
-    "void * owned maybe takes(p) realloc(void * owned maybe p, size_t n);",
-    "char * borrows(s) find(char * view s, int c);",
-    "const char * borrows(static) err_name(int e);",
-    "struct cache { char * owned buf; char * borrows(buf) key; };",
-    "struct tokenizer borrows(text) { const char * borrows(text) pos; };",
-    "  int owned(close) maybe fd = open(path, O_RDONLY);",
+    "FILE *?owned(fclose) fopen(const char *view path, const char *view mode);",
+    "void *?@(owned, takes(p)) realloc(void *?owned p, size_t n);",
+    "char *borrows(s) find(char *view s, int c);",
+    "const char *borrows(static) err_name(int e);",
+    "struct cache { char *owned buf; char *borrows(buf) key; };",
+    "struct tokenizer borrows(text) { const char *borrows(text) pos; };",
+    "  int ?owned(close) fd = open(path, O_RDONLY);",
     "  regex_t owned(regfree) re;",
     "void use(int view fd, pid_t view p);",
-    "!char * borrows(s) first_word(const char * view s);",
-    "long strtol(const char * view s, out char * borrows(s) * view maybe end, int base);",
-    "void name(int e, out const char * borrows(static) * view msg);",
+    "!char *borrows(s) first_word(const char *view s);",
+    "long strtol(const char *view s, out char *borrows(s) *?view end, int base);",
+    "void name(int e, out const char *borrows(static) *view msg);",
     NULL};
   Buffer* buffer = c_buffer(lines);
   TEST_CHECK(token_of(row_at(buffer, 0), "owned") == K);
   TEST_CHECK(token_of(row_at(buffer, 0), "fclose") == N);
-  TEST_CHECK(token_of(row_at(buffer, 0), "maybe") == K);
   TEST_CHECK(token_of(row_at(buffer, 0), "fopen") == N);
   TEST_CHECK(token_of(row_at(buffer, 1), "takes") == K);
+  TEST_CHECK(token_of(row_at(buffer, 1), "owned,") == K);
+  TEST_CHECK(token_of(row_at(buffer, 1), "owned p") == K);
   TEST_CHECK(token_of(row_at(buffer, 1), "realloc") == N);
   TEST_CHECK(token_of(row_at(buffer, 2), "borrows") == K);
   TEST_CHECK(token_of(row_at(buffer, 3), "borrows") == K);
@@ -330,7 +352,6 @@ void test_yasc_lifetime_lists(void) {
   TEST_CHECK(token_of(row_at(buffer, 5), "borrows") == K);
   TEST_CHECK(token_of(row_at(buffer, 5), "borrows(text) pos") == K);
   TEST_CHECK(token_of(row_at(buffer, 6), "owned") == K);
-  TEST_CHECK(token_of(row_at(buffer, 6), "maybe") == K);
   TEST_CHECK(token_of(row_at(buffer, 6), "close") == N);
   TEST_CHECK(token_of(row_at(buffer, 7), "owned") == K);
   TEST_CHECK(token_of(row_at(buffer, 8), "view fd") == K);
@@ -341,8 +362,7 @@ void test_yasc_lifetime_lists(void) {
   TEST_CHECK(token_of(row_at(buffer, 10), "out") == K);
   TEST_CHECK(token_of(row_at(buffer, 10), "borrows") == K);
   TEST_CHECK(token_of(row_at(buffer, 10), "s) *") == N);
-  TEST_CHECK(token_of(row_at(buffer, 10), "view maybe") == K);
-  TEST_CHECK(token_of(row_at(buffer, 10), "maybe") == K);
+  TEST_CHECK(token_of(row_at(buffer, 10), "view end") == K);
   TEST_CHECK(token_of(row_at(buffer, 10), "end,") == N);
   TEST_CHECK(token_of(row_at(buffer, 11), "borrows") == K);
   TEST_CHECK(token_of(row_at(buffer, 11), "static") == K);
@@ -354,15 +374,15 @@ void test_yasc_lifetime_lists(void) {
 // c_api(T): the C type, after a '*' only (a function of that name elsewhere)
 void test_yasc_c_api(void) {
   const char* lines[] = {
-    "const char * borrows(static) maybe c_api(char *) dlerror(void);",
-    "long sl(const char *s, out const char * borrows(s) c_api(char *) * maybe end, int b);",
+    "const char *?@(borrows(static), c_api(char *)) dlerror(void);",
+    "long sl(const char *s, out const char *@(borrows(s), c_api(char *)) *?end, int b);",
     "int c_api(int x); y = c_api(3);",
     NULL};
   Buffer* buffer = c_buffer(lines);
   TEST_CHECK(token_of(row_at(buffer, 0), "c_api") == K);
   TEST_CHECK(token_of(row_at(buffer, 0), "dlerror") == N);
   TEST_CHECK(token_of(row_at(buffer, 1), "c_api") == K);
-  TEST_CHECK(token_of(row_at(buffer, 1), "maybe end") == K);
+  TEST_CHECK(token_of(row_at(buffer, 1), "end,") == N);
   TEST_CHECK(token_of(row_at(buffer, 2), "c_api") == N);
   TEST_CHECK(token_of(row_at(buffer, 2), "c_api(3)") == N);
   buffer_free(buffer);
@@ -392,8 +412,8 @@ void test_yasc_lifetime_lists_as_names(void) {
 
 void test_yasc_unsafe(void) {
   const char* lines[] = {
-    "  unsafe { p = (char * view)raw; }",
-    "  const char * view name = unsafe(counter_name(borrow(c)));",
+    "  unsafe { p = (char *view)raw; }",
+    "  const char *view name = unsafe(counter_name(borrow(c)));",
     "  unsafe {",
     "  int unsafe = 0; x = s.unsafe(1); unsafe = 2;",
     NULL};
@@ -409,7 +429,7 @@ void test_yasc_unsafe(void) {
 
 void test_yasc_tagged_union(void) {
   const char* lines[] = {
-    "  union(k) { long i when(V_INT); char * view s when(V_STR, V_SYM); } u;",
+    "  union(k) { long i when(V_INT); char *view s when(V_STR, V_SYM); } u;",
     "  int buf[4] when(V_BUF);",
     "  GUARD(when(is_imm32(src2)); and(x)); return when(x); int when;",
     "#define when(expr) ok = !!(expr)",
@@ -478,7 +498,7 @@ void test_yasc_casts(void) {
   const char* lines[] = {
     "uint16_t port = cast<int(uint16_t)>(n); float f = cast< float (double) >(d);",
     "auto de = cast<ptr(struct dirent *), align>(dir->buf + pos);",
-    "char * view hit = unsafe_cast<qual(char *)>(s); x = cast<align(4)>(p);",
+    "char *view hit = unsafe_cast<qual(char *)>(s); x = cast<align(4)>(p);",
     "if (cast < as && trunc > 1) return cast(int, x); s.cast = p->unsafe_cast;",
     "y = cast<trunc(uint8_t)>(f(a, int(b)));",
     "m = unsafe_cast<const(char *)>(g); e = unsafe_cast<ptr(char *), const>(lit);",
@@ -605,7 +625,7 @@ void test_yasc_slices(void) {
   const char* lines[] = {
     "    [:0]char s = path[0:len:0];",
     "static []const char names = list[1:];",
-    "size_t count([]char * view argv, [ : 0 ]const char p, [][]int rows);",
+    "size_t count([]char *view argv, [ : 0 ]const char p, [][]int rows);",
     "int a[] __attribute__((unused)); char *argv[]; v = m[i][j]; x = y[:0];",
     "struct line { [:0]char text; }; f(\"x\"[1:], 'a' [0]);",
     NULL};
@@ -638,8 +658,14 @@ void test_yasc_slices(void) {
 // in (the default) / inout / out before a parameter's type; names elsewhere
 void test_yasc_param_access(void) {
   const char* lines[] = {
-    "void step(inout struct node * view n, in const char * view s, out int * view r);",
+    "void step(inout struct node *view n, in const char *view s, out int *view r);",
     "  FILE *in = fopen(p, \"r\"); in = 0; if (in && inout) return in;",
+    "int on_key(unused inout struct ctx *view c, int unused) __attribute__((unused));",
+    "{ unused(user, group); x = unused(1); }",
+    "static const char *parse_name(const char *s, out char *out, size_t cap) { out[n] = 0; }",
+    "int close(int drop ?owned(close) fd); struct out x; struct drop *d;",
+    "               out struct passwd *?borrows(pwd) *result) {",
+    "#define out foo",
     NULL};
   Buffer* buffer = c_buffer(lines);
   TEST_CHECK(token_of(row_at(buffer, 0), "inout") == K);
@@ -651,6 +677,21 @@ void test_yasc_param_access(void) {
   TEST_CHECK(token_of(row_at(buffer, 1), "in &&") == N);
   TEST_CHECK(token_of(row_at(buffer, 1), "inout)") == N);
   TEST_CHECK(token_of(row_at(buffer, 1), "in;") == N);
+  TEST_CHECK(token_of(row_at(buffer, 2), "unused inout") == K);
+  TEST_CHECK(token_of(row_at(buffer, 2), "unused)") == N);
+  TEST_CHECK(token_of(row_at(buffer, 2), "unused))") == N);
+  TEST_CHECK(token_of(row_at(buffer, 3), "unused(user") == K);
+  TEST_CHECK(token_of(row_at(buffer, 3), "unused(1") == N);
+  // words only where a parameter starts (or before an int handle's words),
+  // names everywhere else: `out char *out` is an out parameter named out
+  TEST_CHECK(token_of(row_at(buffer, 4), "out char") == K);
+  TEST_CHECK(token_of(row_at(buffer, 4), "out,") == N);
+  TEST_CHECK(token_of(row_at(buffer, 4), "out[") == N);
+  TEST_CHECK(token_of(row_at(buffer, 5), "drop") == K);
+  TEST_CHECK(token_of(row_at(buffer, 5), "out x") == N);
+  TEST_CHECK(token_of(row_at(buffer, 5), "drop *d") == N);
+  TEST_CHECK(token_of(row_at(buffer, 6), "out") == K);
+  TEST_CHECK(token_of(row_at(buffer, 7), "out foo") == N);
   buffer_free(buffer);
 }
 
@@ -661,6 +702,7 @@ TEST_LIST = {
     {"test_yasc_words_as_names", test_yasc_words_as_names},
     {"test_yasc_defer", test_yasc_defer},
     {"test_yasc_unreachable", test_yasc_unreachable},
+    {"test_yasc_undefined", test_yasc_undefined},
     {"test_yasc_casts", test_yasc_casts},
     {"test_yasc_errors", test_yasc_errors},
     {"test_yasc_move_borrow", test_yasc_move_borrow},

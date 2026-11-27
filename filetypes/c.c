@@ -49,12 +49,12 @@ static const char* types[] = {
 // everywhere else, so each one is checked against its neighbours
 // (yasc_word_token). The same rules as tools/vscode-yasc.
 static const char* yasc_keywords[] = {
-  "owned",    "view",     "maybe",      "out",        "drop",
-  "inout",    "in",
+  "owned",    "view",     "out",        "drop",
+  "inout",    "in",       "unused",
   "defer",    "errdefer", "try",        "catch",      "error",   "module",
   "import",   "export",   "error_name", "error_from", "move",    "borrow",
   "unsafe",   "borrows",  "takes",      "when",       "ro",      "wo",
-  "w1c",      "unreachable", "cast",    "unsafe_cast", "c_api", NULL};
+  "w1c",      "unreachable", "cast",    "unsafe_cast", "c_api", "undefined", NULL};
 
 // The permissions and modifiers of cast<...> / unsafe_cast<...>: keywords only
 // inside that list (int(T), float(T), enum(T) there are permissions, not types)
@@ -158,8 +158,7 @@ static bool after_member_access(const HighlightContext* ctx, int start) {
 }
 
 static bool is_qualifier_after_star(const char* line, int start, int end) {
-  return word_is(line, start, end, "owned") || word_is(line, start, end, "view") ||
-         word_is(line, start, end, "maybe");
+  return word_is(line, start, end, "owned") || word_is(line, start, end, "view");
 }
 
 // What may stand in a parameter array's brackets beside a pointer qualifier
@@ -169,12 +168,15 @@ static bool is_bracket_word(const char* line, int start, int end) {
          word_is(line, start, end, "static");
 }
 
-// `char * view argv[owned]`, `int a[maybe 4]`: a parameter array's
+// `char *view argv[owned]`, `int a[?4]`: a parameter array's
 // brackets qualify the pointer it becomes, as C99's `a[const]` -- after
 // `name[` and other such words, with only words and numbers up to the ']'
 static bool in_param_brackets(const HighlightContext* ctx, int start, int end) {
   const char* line = ctx->line;
   int p = skip_blanks_back(ctx, start);
+  if (p >= 0 && line[p] == '?') {
+    p = skip_blanks_back(ctx, p);  // `[?view]`
+  }
   while (p >= 0 && is_ident_char(line[p])) {
     int stop = 0;
     const int w = word_before(ctx, p + 1, &stop);
@@ -220,10 +222,39 @@ static int list_end(const HighlightContext* ctx, int open) {
   return -1;
 }
 
-// A pointer qualifier may come here: after a '*', after owned / view / maybe,
-// or after the list of owned(...) / borrows(...) / takes(...)
+// In a pointer's `*@( ... )` (or `*?@( ... )`): the words of one '*', after
+// the '(' or a ',' at its level
+static bool in_star_group(const HighlightContext* ctx, int start) {
+  const char* line = ctx->line;
+  int depth = 0;
+  for (int i = start - 1; i >= 0; --i) {
+    if (line[i] == ')') {
+      ++depth;
+    } else if (line[i] == '(') {
+      if (depth > 0) {
+        --depth;
+        continue;
+      }
+      return i >= 2 && line[i - 1] == '@' &&
+             (line[i - 2] == '*' || (line[i - 2] == '?' && i >= 3 && line[i - 3] == '*'));
+    } else if (depth == 0 && !is_ident_char(line[i]) && !is_space(line[i]) && line[i] != ',') {
+      return false;
+    }
+  }
+  return false;
+}
+
+// A pointer qualifier may come here: against a '*' (after its '?'), in its
+// @( ), after owned / view, or after the list of owned(...) / borrows(...) /
+// takes(...)
 static bool in_qualifier_position(const HighlightContext* ctx, int start) {
   const char* line = ctx->line;
+  if (start >= 2 && line[start - 1] == '?' && line[start - 2] == '*') {
+    return true;
+  }
+  if (in_star_group(ctx, start)) {
+    return true;
+  }
   const int p = skip_blanks_back(ctx, start);
   if (p < 0) {
     return false;
@@ -249,9 +280,13 @@ static bool in_qualifier_position(const HighlightContext* ctx, int start) {
 }
 
 // A name (not a number, not a C keyword) just before `start`, after a blank:
-// a type in `int view fd`, `regex_t owned(regfree) re`, `struct t borrows(x) {`
+// a type in `int view fd`, `int ?owned(close) fd`, `regex_t owned(regfree) re`,
+// `struct t borrows(x) {`
 static bool after_type_name(const HighlightContext* ctx, int start) {
   int stop = 0;
+  if (start >= 2 && ctx->line[start - 1] == '?' && is_space(ctx->line[start - 2])) {
+    --start;
+  }
   const int w = word_before(ctx, start, &stop);
   if (w < 0 || stop == start || !is_ident_start(ctx->line[w])) {
     return false;
@@ -392,6 +427,12 @@ static bool in_cast_list(const HighlightContext* ctx, int start, int end) {
   return false;
 }
 
+static bool is_param_word(const char* line, int start, int end) {
+  return word_is(line, start, end, "out") || word_is(line, start, end, "drop") ||
+         word_is(line, start, end, "inout") || word_is(line, start, end, "in") ||
+         word_is(line, start, end, "unused");
+}
+
 static int yasc_word_token(const HighlightContext* ctx, int start, int end) {
   const char* line = ctx->line;
   if (after_member_access(ctx, start)) {
@@ -401,7 +442,7 @@ static int yasc_word_token(const HighlightContext* ctx, int start, int end) {
   const char next = next_at < ctx->len ? line[next_at] : '\0';
   const bool eol = next_at == ctx->len;
 
-  // owned / view / maybe qualify a pointer: after its '*' (or another
+  // owned / view qualify a pointer: against its '*' (after its ?, in its @( )
   // qualifier); owned(dealloc), borrows(x), takes(p) there too
   const bool listed = next == '(' && is_qualifier_with_list(line, start, end);
   if (is_qualifier_after_star(line, start, end) || listed) {
@@ -413,14 +454,14 @@ static int yasc_word_token(const HighlightContext* ctx, int start, int end) {
           word_is(line, start, end, "c_api")) {
         return -1;
       }
-      return eol || is_ident_start(next) || next == '*' || next == ')' || next == ','
+      return eol || is_ident_start(next) || next == '*' || next == ')' || next == ',' || next == '['
                  ? EHighlightToken_Keyword
                  : -1;
     }
     if (!listed && in_param_brackets(ctx, start, end)) {
       return EHighlightToken_Keyword;
     }
-    // after a type: int handles (`int view fd`, `int owned(close) maybe fd`),
+    // after a type: int handles (`int view fd`, `int ?owned(close) fd`),
     // owned objects (`regex_t owned(regfree) re`), `struct t borrows(text) {`
     if (!after_type_name(ctx, start) || word_is(line, start, end, "takes") || word_is(line, start, end, "c_api")) {
       return -1;
@@ -462,11 +503,40 @@ static int yasc_word_token(const HighlightContext* ctx, int start, int end) {
                ? EHighlightToken_Keyword
                : -1;
   }
-  // out / inout / in / drop come before a parameter's type (`FILE *in`,
-  // `in = 0` stay names: no type follows)
-  if (word_is(line, start, end, "out") || word_is(line, start, end, "drop") ||
-      word_is(line, start, end, "inout") || word_is(line, start, end, "in")) {
-    return next_at > end && is_ident_start(next) ? EHighlightToken_Keyword : -1;
+  // the statement `unused(a, b);`: at a statement's start
+  if (word_is(line, start, end, "unused") && next == '(') {
+    const int p = skip_blanks_back(ctx, start);
+    return p < 0 || strchr(";{}", line[p]) != NULL ? EHighlightToken_Keyword : -1;
+  }
+  // out / inout / in / drop / unused: where a parameter's declaration starts
+  // -- after '(' or ',' (or first on a line: the parameters go on) or another
+  // of them -- with its type after them; out / inout / drop also after an int
+  // handle's type, before owned / view (`int drop ?owned(close) fd`).
+  // Names everywhere else, as the compiler reads them: `out char *out`,
+  // `FILE *in`, `in = 0`, `int unused)`, `struct out x`.
+  if (is_param_word(line, start, end)) {
+    if (next == '?' && next_at + 1 < ctx->len && is_ident_start(line[next_at + 1]) &&
+        !word_is(line, start, end, "in") && !word_is(line, start, end, "unused")) {
+      const int w_end = word_end(ctx, next_at + 1);
+      if (word_is(line, next_at + 1, w_end, "owned") || word_is(line, next_at + 1, w_end, "view")) {
+        return EHighlightToken_Keyword;  // `int drop ?owned(close) fd`
+      }
+    }
+    if (next_at == end || !is_ident_start(next)) {
+      return -1;
+    }
+    const int next_end = word_end(ctx, next_at);
+    if (!word_is(line, start, end, "in") && !word_is(line, start, end, "unused") &&
+        (word_is(line, next_at, next_end, "owned") || word_is(line, next_at, next_end, "view"))) {
+      return EHighlightToken_Keyword;
+    }
+    const int p = skip_blanks_back(ctx, start);
+    if (p < 0 || line[p] == '(' || line[p] == ',') {
+      return EHighlightToken_Keyword;
+    }
+    int stop = 0;
+    const int w = word_before(ctx, start, &stop);
+    return w >= 0 && is_param_word(line, w, stop) ? EHighlightToken_Keyword : -1;
   }
   if (word_is(line, start, end, "defer") || word_is(line, start, end, "errdefer")) {
     return eol || is_ident_start(next) || next == '*' || next == '{' || next == '('
@@ -492,6 +562,18 @@ static int yasc_word_token(const HighlightContext* ctx, int start, int end) {
     const int w = word_before(ctx, start, &stop);
     return w >= 0 && (word_is(line, w, stop, "else") || word_is(line, w, stop, "catch")) ? EHighlightToken_Keyword
                                                                                           : -1;
+  }
+  // `T x = undefined;` / `int a = undefined, b = 1;`: a whole initializer, a
+  // value like nullptr -- not `x == undefined`, `x += undefined`, `undefined;`
+  // or `int undefined;`
+  if (word_is(line, start, end, "undefined")) {
+    if (eol || (next != ';' && next != ',')) {
+      return -1;
+    }
+    const int p = skip_blanks_back(ctx, start);
+    return p >= 0 && line[p] == '=' && (p == 0 || strchr("=!<>+-*/%&|^", line[p - 1]) == NULL)
+               ? EHighlightToken_Keyword2
+               : -1;
   }
   // f() catch X, catch |e| {...}: after the end of an expression, or first on a
   // continuation line

@@ -52,16 +52,17 @@ static bool tags_file_readable(const char* path) {
 /* "dir/tags", or plain "tags" for an empty dir. */
 static char* tags_path_in(const char* dir, size_t dir_len) {
   static const char name[] = "tags";
-  char* path = (char*)malloc(dir_len + sizeof(name) + 1);
+  const size_t size = dir_len + sizeof(name) + 1;
+  char* path = (char*)malloc(size);
   if (path == NULL) {
     return NULL;
   }
   if (dir_len == 0) {
-    strcpy(path, name);
+    strlcpy(path, name, size);
   } else {
     memcpy(path, dir, dir_len);
     path[dir_len] = '/';
-    strcpy(path + dir_len + 1, name);
+    strlcpy(path + dir_len + 1, name, size - dir_len - 1);
   }
   return path;
 }

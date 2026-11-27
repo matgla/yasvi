@@ -447,7 +447,7 @@ static void tag_write(const char* name, const char* content) {
 
 /* A two-file project with a tags file, and the editor on main.c. */
 static void tag_fixture_enter(Editor* editor, bool with_tags) {
-  strcpy(tag_dir, "/tmp/yasvi_tagnav_XXXXXX");
+  strlcpy(tag_dir, "/tmp/yasvi_tagnav_XXXXXX", sizeof(tag_dir));
   TEST_ASSERT(mkdtemp(tag_dir) != NULL);
   TEST_ASSERT(getcwd(tag_prev_cwd, sizeof(tag_prev_cwd)) != NULL);
   TEST_ASSERT(chdir(tag_dir) == 0);
